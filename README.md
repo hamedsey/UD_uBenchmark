@@ -4,7 +4,9 @@ TO DO - Add command line arguments.
 Currently, all parameters will require a manual change in the code and recompilation.
 
 TO COMPILE: make
-FIRST START THE SERVER: ./UD_Server -s [client IP addr] -t [thread_num] -g [gidx] -v [ib_devname]
+FIRST START THE SERVER: 
+
+     ./UD_Server -s [client IP addr] -t [thread_num] -g [gidx] -v [ib_devname]
 
 Look at the first [server_qpn] in server output. Example:
 
