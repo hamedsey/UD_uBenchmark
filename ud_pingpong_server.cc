@@ -168,9 +168,9 @@ void* server_threadfunc(void* x) {
 				++conn->rcnt;
 				--conn->routs;
 
-				//#if debug
+				#if debug
 					if(conn->rcnt % 10000000 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
-				//#endif
+				#endif
 
 				#if debug
 					printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);

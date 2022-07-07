@@ -30,7 +30,7 @@
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 1				//enables round robin request distribution per thread
+#define RR 0				//enables round robin request distribution per thread
 #define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
@@ -250,7 +250,12 @@ void* client_threadfunc(void* x) {
 	int thread_num = tdata->id;
 
 	RDMAConnection *conn = tdata->conn;
-	if(thread_num == active_thread_num - 1) {
+	if(thread_num == active_thread_num - 1 && thread_num == 0) {
+		conn = new RDMAConnection(thread_num,1,ib_devname_in,gidx_in,remote_qp0_in,servername);
+		conn->measured_latency = (double *)malloc(sizeof(double)*(conn->sync_iters));
+		remote_qp0 = rem_dest->qpn;
+	}
+	else if(thread_num == active_thread_num - 1) {
 		conn = new RDMAConnection(thread_num,1,ib_devname_in,gidx_in,remote_qp0_in,servername);
 		conn->measured_latency = (double *)malloc(sizeof(double)*(conn->sync_iters));
 	}
@@ -599,28 +604,28 @@ void* client_threadfunc(void* x) {
 
 		for (int i = 0; i < window_size; i++) {
 
-			int req_lat = gen_latency(mean, distribution_mode,0);
-			req_lat = req_lat >> 4;
+			//int req_lat = gen_latency(mean, distribution_mode,0);
+			//req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
                 printf("lat = %d \n",req_lat); 
             #endif
-			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
+			//uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
+			//uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
 
 			#if debug 
 				printf("lower %d; upper %d\n", lat_lower, lat_upper);
 			#endif
 
-			conn->buf_send[i][1] = lat_lower;
-			conn->buf_send[i][0] = lat_upper;
+			//conn->buf_send[i][1] = lat_lower;
+			//conn->buf_send[i][0] = lat_upper;
 
 			//0 signals BF pkt came from client, 1 indicates to BF pkt came from server
-			conn->buf_send[i][2] = 0;
+			//conn->buf_send[i][2] = 0;
 
 			
-			conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
-			conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
-			conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
+			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
+			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
+			//conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
 
 			int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, i);
 			if (success == EINVAL) printf("Invalid value provided in wr \n");
@@ -700,11 +705,11 @@ void* client_threadfunc(void* x) {
 							    printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
 						    #endif
 						
-						    if(conn->rcnt % INTERVAL == 0) {
-							    double curr_clock = now();
-							    printf("T%d - %f rps, rcnt = %d, scnt = %d \n",thread_num,INTERVAL/(curr_clock-prev_clock),conn->rcnt,conn->scnt);
-							    prev_clock = curr_clock;
-						    }
+						    //if(conn->rcnt % INTERVAL == 0) {
+							//    double curr_clock = now();
+							//    printf("T%d - %f rps, rcnt = %d, scnt = %d \n",thread_num,INTERVAL/(curr_clock-prev_clock),conn->rcnt,conn->scnt);
+							//    prev_clock = curr_clock;
+						    //}
 						    //if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
 
 
@@ -713,7 +718,8 @@ void* client_threadfunc(void* x) {
 
                             //#if 0
 						    if(conn->scnt < conn->iters) {
-							    int req_lat = gen_latency(mean, distribution_mode,0);
+							    /*
+								int req_lat = gen_latency(mean, distribution_mode,0);
 							    req_lat = req_lat >> 4;
                                 #if MEAS_GEN_LAT 
                                     printf("lat = %d \n",req_lat); 
@@ -727,7 +733,7 @@ void* client_threadfunc(void* x) {
 
 							    conn->buf_send[a-num_bufs][1] = lat_lower;
 							    conn->buf_send[a-num_bufs][0] = lat_upper;
-
+								*/
 							    int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
 							    if (success == EINVAL) printf("Invalid value provided in wr \n");
 							    else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
@@ -766,6 +772,7 @@ void* client_threadfunc(void* x) {
 				    #endif
 			    }
             //}
+			/*
             #if 0
 		    for (int i = 0; i < window_size; i++) {
 
@@ -788,7 +795,7 @@ void* client_threadfunc(void* x) {
 				conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
 				conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
 
-			    int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, i);
+			    int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, i);
 			    if (success == EINVAL) printf("Invalid value provided in wr \n");
 			    else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation 2\n");
 			    else if (success == EFAULT) printf("Invalid value provided in qp \n");
@@ -815,6 +822,7 @@ void* client_threadfunc(void* x) {
 			    #endif
 		    }
             #endif
+			*/
 		}
 
 		if (gettimeofday(&end, NULL)) {
