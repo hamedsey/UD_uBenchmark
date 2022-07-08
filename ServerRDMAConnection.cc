@@ -479,5 +479,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 	if (routs < recv_bufs_num) {
 		fprintf(stderr, "Couldn't post -recv_bufs_num- receive requests (%d)\n", routs);
 	}
+	printf("outstanding recv requests %d\n", routs);
+
 }
 #endif

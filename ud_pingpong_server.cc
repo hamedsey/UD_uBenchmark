@@ -191,10 +191,10 @@ void* server_threadfunc(void* x) {
 				/*
 				conn->buf_send[a-num_bufs][1] = sleep_int_lower;
 				conn->buf_send[a-num_bufs][0] = sleep_int_upper;
-
-				//if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
-				for(int q = 2; q <= 17; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
 				*/
+				//if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
+				for(int q = 0; q <= 17; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+				
 				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
 				//printf("src qp = %d \n",wc[i].src_qp);
 				if (success == EINVAL) printf("Invalid value provided in wr \n");

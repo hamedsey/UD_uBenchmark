@@ -470,7 +470,7 @@ RDMAConnection::RDMAConnection(int id, int isLast, char *ib_devname_in, int gidx
 	} else
 		memset(&my_dest.gid, 0, sizeof my_dest.gid);
 	inet_ntop(AF_INET6, &my_dest.gid, gid, sizeof gid);
-	printf("  local address:  LID 0x%04x, QPN 0x%06x, PSN 0x%06x: GID %s\n",my_dest.lid, my_dest.qpn, my_dest.psn, gid);
+	printf("  local address:  LID 0x%04x, QPN %d, PSN 0x%06x: GID %s\n",my_dest.lid, my_dest.qpn, my_dest.psn, gid);
 	int server_qpn0 = remote_qp0_in;
 	if(id == 0) {
 		rem_dest = pp_client_exch_dest(servername, server_qpn0, &my_dest);
@@ -480,7 +480,7 @@ RDMAConnection::RDMAConnection(int id, int isLast, char *ib_devname_in, int gidx
 		}
 		
 		inet_ntop(AF_INET6, &rem_dest->gid, gid, sizeof gid);
-		printf("  remote address: LID 0x%04x, QPN 0x%06x, PSN 0x%06x, GID %s\n",rem_dest->lid, rem_dest->qpn, rem_dest->psn, gid);
+		printf("  remote address: LID 0x%04x, QPN %d, PSN 0x%06x, GID %s\n",rem_dest->lid, rem_dest->qpn, rem_dest->psn, gid);
 	}
 
 	if (pp_connect_ctx(ctx, ib_port, my_dest.psn, sl, rem_dest, gidx))
