@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -305,7 +305,7 @@ void* client_threadfunc(void* x) {
 				printf("lower %d; upper %d\n", lat_lower, lat_upper);
 			#endif 
 
-            //send one pkt with 0xFFFF to clear state on FPGA
+            //send one pkt with 0xFFFF as a test
 			conn->buf_send[i][1] = 255;//lat_lower;
 			conn->buf_send[i][0] = 255;//lat_upper;
 
@@ -333,7 +333,7 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				offset = (0x007 & (offset+1));// = (offset+1)%SERVER_THREADS;
+				offset = ((SERVER_THREADS-1) & (offset+1));// = (offset+1)%SERVER_THREADS;
 				//if(offset == SERVER_THREADS) offset = 0;
 				conn->dest_qpn = remote_qp0+offset;
 			#endif
@@ -344,7 +344,7 @@ void* client_threadfunc(void* x) {
 		}
 
 
-        //wait to receive pkt from fpga
+        //wait to receive pkt
 		while (conn->rcnt < 1 || conn->scnt < 1) {
 
 				struct ibv_wc wc[num_bufs*2];
@@ -429,9 +429,9 @@ void* client_threadfunc(void* x) {
 								}
 
 								#if RR	
-									offset = (0x007 & (offset+1));							
-                                					//offset++;// = (offset+1)%SERVER_THREADS;
-                        					        //if(offset == SERVER_THREADS) offset = 0;
+									offset = ((SERVER_THREADS-1) & (offset+1));							
+									//offset++;// = (offset+1)%SERVER_THREADS;
+									//if(offset == SERVER_THREADS) offset = 0;
 									//offset = (offset+1)%SERVER_THREADS;
 									conn->dest_qpn = remote_qp0+offset;
 								#endif		
@@ -458,7 +458,6 @@ void* client_threadfunc(void* x) {
 		}
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////
-        printf("Cleared queue state \n");
 	    ret = pthread_barrier_wait(&barrier);
 
         sleep(5);
@@ -558,9 +557,9 @@ void* client_threadfunc(void* x) {
 								}
 
 								#if RR
-									offset = (0x007 & (offset+1));
-                                					//offset++;// = (offset+1)%SERVER_THREADS;
-					                                //if(offset == SERVER_THREADS) offset = 0;
+									offset = ((SERVER_THREADS-1) & (offset+1));
+									//offset++;// = (offset+1)%SERVER_THREADS;
+									//if(offset == SERVER_THREADS) offset = 0;
 									//offset = (offset+1)%SERVER_THREADS;
 									conn->dest_qpn = remote_qp0+offset;
 								#endif		
@@ -625,10 +624,6 @@ void* client_threadfunc(void* x) {
 
 			//conn->buf_send[i][1] = lat_lower;
 			//conn->buf_send[i][0] = lat_upper;
-
-			//0 signals BF pkt came from client, 1 indicates to BF pkt came from server
-			//conn->buf_send[i][2] = 0;
-
 			
 			conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
 			conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
@@ -652,9 +647,9 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				offset = (0x007 & (offset+1));
-                                //offset++;// = (offset+1)%SERVER_THREADS;
-                                //if(offset == SERVER_THREADS) offset = 0;
+				offset = ((SERVER_THREADS-1) & (offset+1));
+				//offset++;// = (offset+1)%SERVER_THREADS;
+				//if(offset == SERVER_THREADS) offset = 0;
 				//offset = (offset+1)%SERVER_THREADS;
 				conn->dest_qpn = remote_qp0+offset;
 			#endif	
@@ -674,168 +669,114 @@ void* client_threadfunc(void* x) {
 		while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
 			if (terminate_load == 1) break;
 
-            //while(conn-> rcnt != conn->scnt) {
-            
-			    struct ibv_wc wc[num_bufs*2];
-			    int ne, i;
+			struct ibv_wc wc[num_bufs*2];
+			int ne, i;
 
-			    do {
-				    ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
-				    if (ne < 0) {
-					    fprintf(stderr, "poll CQ failed %d\n", ne);
-				    }
+			do {
+				ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
+				if (ne < 0) {
+					fprintf(stderr, "poll CQ failed %d\n", ne);
+				}
 
-				    #if debug 
-					    printf("thread_num %d polling \n",thread_num);
-				    #endif
+				#if debug 
+					printf("thread_num %d polling \n",thread_num);
+				#endif
 
-			    } while (!conn->use_event && ne < 1);
+			} while (!conn->use_event && ne < 1);
 
-			    for (i = 0; i < ne; ++i) {
-				    if (wc[i].status != IBV_WC_SUCCESS) {
-					    fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-						    ibv_wc_status_str(wc[i].status),
-						    wc[i].status, (int) wc[i].wr_id);
-				    }
+			for (i = 0; i < ne; ++i) {
+				if (wc[i].status != IBV_WC_SUCCESS) {
+					fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+						ibv_wc_status_str(wc[i].status),
+						wc[i].status, (int) wc[i].wr_id);
+				}
 
-				    int a = (int) wc[i].wr_id;
-				    switch (a) {
-					    case 0 ... num_bufs-1: // SEND_WRID
-						    ++conn->scnt;
-						    --conn->souts;
-						    #if debug
-							    printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-						    #endif
-						    break;
+				int a = (int) wc[i].wr_id;
+				switch (a) {
+					case 0 ... num_bufs-1: // SEND_WRID
+						++conn->scnt;
+						--conn->souts;
+						#if debug
+							printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+						#endif
+						break;
 
-					    case num_bufs ... 2*num_bufs-1:
-						    ++conn->rcnt;
-						    --conn->routs;
-						    #if debug
-							    printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-						    #endif
+					case num_bufs ... 2*num_bufs-1:
+						++conn->rcnt;
+						--conn->routs;
+						#if debug
+							printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+						#endif
+					
+						//if(conn->rcnt % INTERVAL == 0) {
+						//    double curr_clock = now();
+						//    printf("T%d - %f rps, rcnt = %d, scnt = %d \n",thread_num,INTERVAL/(curr_clock-prev_clock),conn->rcnt,conn->scnt);
+						//    prev_clock = curr_clock;
+						//}
+						//if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
+
+
+						if(!conn->pp_post_recv(conn->ctx, a, false)) ++conn->routs;
+						if (conn->routs != window_size) fprintf(stderr,"Loading thread %d couldn't post receive (%d)\n", thread_num, conn->routs);
+
+						//#if 0
+						if(conn->scnt < conn->iters) {
+							/*
+							int req_lat = gen_latency(mean, distribution_mode,0);
+							req_lat = req_lat >> 4;
+							#if MEAS_GEN_LAT 
+								printf("lat = %d \n",req_lat); 
+							#endif
+							uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
+							uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
 						
-						    //if(conn->rcnt % INTERVAL == 0) {
-							//    double curr_clock = now();
-							//    printf("T%d - %f rps, rcnt = %d, scnt = %d \n",thread_num,INTERVAL/(curr_clock-prev_clock),conn->rcnt,conn->scnt);
-							//    prev_clock = curr_clock;
-						    //}
-						    //if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
+							#if debug 
+								printf("lower %d; upper %d\n", lat_lower, lat_upper);
+							#endif
 
-
-						    if(!conn->pp_post_recv(conn->ctx, a, false)) ++conn->routs;
-						    if (conn->routs != window_size) fprintf(stderr,"Loading thread %d couldn't post receive (%d)\n", thread_num, conn->routs);
-
-                            //#if 0
-						    if(conn->scnt < conn->iters) {
-							    /*
-								int req_lat = gen_latency(mean, distribution_mode,0);
-							    req_lat = req_lat >> 4;
-                                #if MEAS_GEN_LAT 
-                                    printf("lat = %d \n",req_lat); 
-                                #endif
-							    uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-							    uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
+							conn->buf_send[a-num_bufs][1] = lat_lower;
+							conn->buf_send[a-num_bufs][0] = lat_upper;
+							*/
+							int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
+							if (success == EINVAL) printf("Invalid value provided in wr \n");
+							else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+							else if (success == EFAULT) printf("Invalid value provided in qp \n");
+							else if (success != 0) {
+								printf("success = %d, \n",success);
+								fprintf(stderr, "Couldn't post send 2 \n");
+							}
+							else {
+								++conn->souts;
+								#if debug
+									printf("send posted... souts = %d, \n",conn->souts);
+								#endif
+							}
 							
-							    #if debug 
-								    printf("lower %d; upper %d\n", lat_lower, lat_upper);
-							    #endif
+							#if RR
+								offset = ((SERVER_THREADS-1) & (offset+1));
+												//offset++;// = (offset+1)%SERVER_THREADS;
+											//if(offset == SERVER_THREADS) offset = 0;
+									//offset = (offset+1)%SERVER_THREADS;
+								conn->dest_qpn = remote_qp0+offset;
+							#endif	
 
-							    conn->buf_send[a-num_bufs][1] = lat_lower;
-							    conn->buf_send[a-num_bufs][0] = lat_upper;
-								*/
-							    int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
-							    if (success == EINVAL) printf("Invalid value provided in wr \n");
-							    else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-							    else if (success == EFAULT) printf("Invalid value provided in qp \n");
-							    else if (success != 0) {
-								    printf("success = %d, \n",success);
-								    fprintf(stderr, "Couldn't post send 2 \n");
-							    }
-							    else {
-								    ++conn->souts;
-								    #if debug
-									    printf("send posted... souts = %d, \n",conn->souts);
-								    #endif
-							    }
-                                
-							    #if RR
-								    offset = (0x007 & (offset+1));
-                               					    //offset++;// = (offset+1)%SERVER_THREADS;
-					                            //if(offset == SERVER_THREADS) offset = 0;
-							    	    //offset = (offset+1)%SERVER_THREADS;
-								    conn->dest_qpn = remote_qp0+offset;
-							    #endif	
+							#if RANDQP
+								conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
+							#endif
+						}
+						//#endif
+					
+						break;
 
-							    #if RANDQP
-								    conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-							    #endif
-						    }
-                            //#endif
-						
-						    break;
-
-					    default:
-						    fprintf(stderr, "Completion for unknown wr_id %d\n",
-							    (int) wc[i].wr_id);
-				    }
-			
-				    #if debug 
-					    printf("Thread %d rcnt = %d , scnt = %d \n",thread_num, conn->rcnt,conn->scnt);
-				    #endif
-			    }
-            //}
-			/*
-            #if 0
-		    for (int i = 0; i < window_size; i++) {
-
-			    int req_lat = gen_latency(mean, distribution_mode,0);
-			    req_lat = req_lat >> 4;
-			    uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-			    uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
-
-			    #if debug 
-				    printf("lower %d; upper %d\n", lat_lower, lat_upper);
-			    #endif
-
-			    conn->buf_send[i][1] = lat_lower;
-			    conn->buf_send[i][0] = lat_upper;
-
-				//0 signals BF pkt came from client, 1 indicates to BF pkt came from server
-				conn->buf_send[i][2] = 0;
-							
-				conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
-				conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
-				conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
-
-			    int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, i);
-			    if (success == EINVAL) printf("Invalid value provided in wr \n");
-			    else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation 2\n");
-			    else if (success == EFAULT) printf("Invalid value provided in qp \n");
-			    else if (success != 0) {
-				    printf("success = %d, \n",success);
-				    fprintf(stderr, "Couldn't post send 2 \n");
-				    //return 1;
-			    }
-			    else {
-				    ++conn->souts;
-
-				    #if debug 
-					    printf("send posted... souts = %d, \n",conn->souts);
-				    #endif
-			    }
-
-			    #if RR
-				    offset = (offset+1)%SERVER_THREADS;
-				    conn->dest_qpn = remote_qp0+offset;
-			    #endif	
-
-			    #if RANDQP
-				    conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-			    #endif
-		    }
-            #endif
-			*/
+					default:
+						fprintf(stderr, "Completion for unknown wr_id %d\n",
+							(int) wc[i].wr_id);
+				}
+		
+				#if debug 
+					printf("Thread %d rcnt = %d , scnt = %d \n",thread_num, conn->rcnt,conn->scnt);
+				#endif
+			}
 		}
 
 		if (gettimeofday(&end, NULL)) {
@@ -895,22 +836,9 @@ void* client_threadfunc(void* x) {
 
 		const int num_bufs = conn->sync_bufs_num;
         for (int i = 0; i < num_bufs; i++) {
-
-            /*
-			int req_lat = gen_latency(mean, distribution_mode,1);
-			req_lat = req_lat >> 4;
-			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-			#if debug
-				printf("lower %d; upper %d\n", lat_lower, lat_upper);
-			#endif 
-            */
-
-            //send one pkt with 0xFFFF to clear state on FPGA
-			conn->buf_send[i][1] = 0;//lat_lower;
-			conn->buf_send[i][0] = 0;//lat_upper;
-
-            //send one pkt with 0xFFFF to capture FPGA ingress and egress pkt count            
+            //send one pkt with 0xFFFF
+			conn->buf_send[i][1] = 0;
+			conn->buf_send[i][0] = 0;
             conn->buf_send[i][2] = 255;
             conn->buf_send[i][3] = 255;
 
@@ -930,9 +858,9 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-                                 offset = (0x007 & (offset+1));
+				offset = ((SERVER_THREADS-1) & (offset+1));
 				//offset++;// = (offset+1)%SERVER_THREADS;
-                                //if(offset == SERVER_THREADS) offset = 0;
+				//if(offset == SERVER_THREADS) offset = 0;
 				//offset = (offset+1)%SERVER_THREADS;
 				conn->dest_qpn = remote_qp0+offset;
 			#endif
@@ -942,7 +870,7 @@ void* client_threadfunc(void* x) {
 			#endif
 		}
 
-        //wait to receive pkt from fpga
+        //wait to receive pkt
 		struct timespec requestStart, requestEnd;
         bool received = false;
 		while (received == false) {
@@ -1026,60 +954,6 @@ void* client_threadfunc(void* x) {
 
                             printf("ingress out - 0: %x, 1: %x, 2: %x, 3: %x, total: %x , %lu \n",ingress_out0&0xff,ingress_out1&0xff,ingress_out2&0xff,ingress_out3&0xff, ingress_out_tot,ingress_out_tot);
                             }
-
-
-				            //int sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
-				            //if (sleep_int_upper<0) sleep_int_upper+= 256;
-				            //if (sleep_int_lower<0) sleep_int_lower+= 256;	
-				            //unsigned int sleep_time = (sleep_int_lower + sleep_int_upper * 0x100) << 4;
-
-
-                            /*
-							if(!conn->pp_post_recv(conn->ctx, a,true)) ++conn->routs;
-							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
-
-							if(conn->rcnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1);
-								req_lat = req_lat >> 4;
-								uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-								uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-
-								#if debug
-									printf("lower %d; upper %d\n", lat_lower, lat_upper);
-								#endif
-
-								conn->buf_send[a-num_bufs][1] = lat_lower;
-								conn->buf_send[a-num_bufs][0] = lat_upper;
-                                conn->buf_send[i][2] = 255;
-                                conn->buf_send[i][3] = 255;
-
-								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
-								if (success == EINVAL) printf("Invalid value provided in wr \n");
-								else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-								else if (success == EFAULT) printf("Invalid value provided in qp \n");
-								else if (success != 0) {
-									printf("success = %d, \n",success);
-									fprintf(stderr, "Couldn't post send 2 \n");
-								}
-								else {
-									++conn->souts;
-									#if debug
-										printf("send posted... souts = %d, \n",conn->souts);
-									#endif
-								}
-
-								#if RR
-									offset = (offset+1)%SERVER_THREADS;
-									conn->dest_qpn = remote_qp0+offset;
-								#endif		
-
-								#if RANDQP
-									conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-									//printf("dest_qpn = %d \n",conn->dest_qpn);
-								#endif		
-
-							}
-                            */
 							
 							break;
 
@@ -1104,9 +978,6 @@ void* client_threadfunc(void* x) {
 	if (thread_num < active_thread_num - 1){
         //sleep(10);
         for (int u=0; u<1000000; u++) {
-            //if(thread_num == active_thread_num - 1) int num_bufs = conn->sync_bufs_num;
-            //else int num_bufs = conn->bufs_num;
-
             const int num_bufs = conn->bufs_num;
 
             struct ibv_wc wc[num_bufs*2];

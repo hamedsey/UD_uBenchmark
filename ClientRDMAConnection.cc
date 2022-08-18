@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 #ifndef _CRDMACONNECTION_
 #define _CRDMACONNECTION_
@@ -143,9 +143,6 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		init_attr.cap.max_send_sge = 1;
 		init_attr.cap.max_recv_sge = 1;
 		init_attr.qp_type = IBV_QPT_UD;
-
-		//QPN Range: (0x000064,0x03ffff) 262043 total QPs possible in ancon testbed
-		//QPN Range: (0x000080,0x01ffff) 130944 total QPs possible in keg testbed
 
 		if(id == 0) {
 			while(1)
