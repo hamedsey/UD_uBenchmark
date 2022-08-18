@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 
 #include <stdio.h>
@@ -30,8 +30,8 @@
 
 #define RANDOM 0
 #define RR 0
-#define JSQ 0
-#define JLQ 0
+//#define JSQ 0
+//#define JLQ 0
 atomic <uint32_t> * qStates;
 
 uint32_t shortestQueue;
@@ -50,7 +50,7 @@ char* clientname;
 uint8_t NUM_THREADS = 4;
 uint8_t SERVER_THREADS = 4;
 
-
+/*
 inline uint8_t findShortest(uint8_t thread_num) {
 	//shortestValue[thread_num] = qStates[0];
 	uint32_t shortestValue = qStates[0];
@@ -68,7 +68,7 @@ inline uint8_t findShortest(uint8_t thread_num) {
 inline void resetQStates() {
 	for(int i = 0; i < SERVER_THREADS; i++) qStates[i] = 0;
 }
-
+*/
 
 inline void my_sleep(uint n, int thread_num) {
 	//if(thread_num ==0) printf("mysleep = %d \n",n);
@@ -117,7 +117,7 @@ void* server_threadfunc(void* x) {
 
 	struct thread_data *tdata = (struct thread_data*) x;
 	RDMAConnection *conn = tdata->conn;
-	conn = new RDMAConnection(tdata->id, ib_devname_in, gidx_in ,servername, clientname);
+	conn = new RDMAConnection(tdata->id, ib_devname_in, gidx_in ,servername, clientname, remote_qp0_in);
 
 	int thread_num = tdata->id;
 
@@ -127,7 +127,7 @@ void* server_threadfunc(void* x) {
     CPU_ZERO(&cpuset);       //clears the cpuset
     CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
 
-	printf("T%d - qps = %d and %d \n",thread_num,conn->my_dest[0].qpn,conn->my_dest[1].qpn);
+	printf("T%d - QPs = %d and %d \n",thread_num,conn->my_dest[0].qpn,conn->my_dest[1].qpn);
 
 	sched_setaffinity(0, sizeof(cpuset), &cpuset);
 
@@ -141,7 +141,7 @@ void* server_threadfunc(void* x) {
 	#endif
 	
 	conn->dest_qpn = remote_qp0_in+offset;
-	printf("T%d - dest qpn = %d \n",thread_num,conn->dest_qpn);
+	//printf("T%d - dest qpn = %d \n",thread_num,conn->dest_qpn);
 
 	struct ibv_wc wc[num_bufs*2];
 	int ne, i;
@@ -167,15 +167,10 @@ void* server_threadfunc(void* x) {
 
 				if(empty_cnt >= 1000000000) break;
 			#else
-				//commented 4 multiple connections
-				//do {
-					ne = ibv_poll_cq(conn->ctx[y]->cq, 2*num_bufs , wc);				
-					if (ne < 0) {
-						fprintf(stderr, "poll CQ failed %d\n", ne);
-					}
-
-				//commented 4 multiple connections
-				//} while (!conn->use_event && ne < 1);
+				ne = ibv_poll_cq(conn->ctx[y]->cq, 2*num_bufs , wc);				
+				if (ne < 0) {
+					fprintf(stderr, "poll CQ failed %d\n", ne);
+				}
 			#endif
 
 
@@ -232,7 +227,7 @@ void* server_threadfunc(void* x) {
 					else sendContext = 0;
 
 					if(sleep_int_lower == 255 && sleep_int_upper == 255) {
-						resetQStates();
+						//resetQStates();
 						conn->routs += !(conn->pp_post_recv(conn->ctx[y], a, y));
 						if (conn->routs != num_bufs*conn->numConnections ) fprintf(stderr,"Couldn't post receive 1 (%d)\n",conn->routs);
 
@@ -253,7 +248,6 @@ void* server_threadfunc(void* x) {
 
 							success = conn->pp_post_send(conn->ctx[sendContext], clientSrcQPN /*conn->rem_dest->qpn*/, conn->size , a-num_bufs, sendContext); //need to update dest qpn from payload
 						}
-						//printf("HERE!!!! \n");
 					}
 					else {
 						conn->routs += !(conn->pp_post_recv(conn->ctx[y], a, y));
@@ -270,8 +264,10 @@ void* server_threadfunc(void* x) {
 								uint8_t ret = (g_lehmer32_state >> (32-2*thread_num)) % SERVER_THREADS;
 								conn->dest_qpn = remote_qp0_in + ret;
 							#elif RR
-								offset = (offset+1)%SERVER_THREADS;
+								offset = ((SERVER_THREADS-1) & (offset+1));
+								//offset = (offset+1)%SERVER_THREADS;
 								conn->dest_qpn = remote_qp0_in+offset;
+							/*
 							#elif JSQ
 								uint8_t shortestOffset = findShortest(thread_num);
 								conn->dest_qpn = remote_qp0_in + shortestOffset;
@@ -280,6 +276,7 @@ void* server_threadfunc(void* x) {
 								uint8_t shortestOffset = findShortest(thread_num);
 								conn->dest_qpn = remote_qp0_in + shortestOffset;
 								qStates[shortestOffset]+=sleep_time;
+							*/
 							#endif
 
 							conn->buf_send[sendContext][a-num_bufs][2] = 1;	
@@ -327,60 +324,6 @@ void* server_threadfunc(void* x) {
 		perror("gettimeofday");
 	}
 
-
-	/*
-	#if 1
-	//if (thread_num < active_thread_num - 1){
-	sleep(10);
-	for (int u=0; u<1000000; u++) {
-	    //if(thread_num == active_thread_num - 1) int num_bufs = conn->sync_bufs_num;
-	    //else int num_bufs = conn->bufs_num;
-
-	    const int num_bufs = conn->recv_bufs_num;
-
-	    struct ibv_wc wc[conn->recv_bufs_num*2];
-		int ne, i;
-
-		    ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
-	    if (ne < 0) {
-			    fprintf(stderr, "poll CQ failed %d\n", ne);
-		    }
-	    for (i = 0; i < ne; ++i) {
-			    if (wc[i].status != IBV_WC_SUCCESS) {
-				    fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-					    ibv_wc_status_str(wc[i].status),
-					    wc[i].status, (int) wc[i].wr_id);
-			    }
-
-			    int a = (int) wc[i].wr_id;
-			    switch (a) {
-				    case 0 ... num_bufs-1: // SEND_WRID
-					    ++conn->scnt;
-					    --conn->souts;
-					    //#if debug
-						    //printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-					    //#endif
-					    break;
-
-				    case num_bufs ... 2*num_bufs-1:
-					    ++conn->rcnt;
-					    --conn->routs;
-					    //#if debug
-						    //printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-					    //#endif
-		}        
-	    }
-	}
-	//}
-
-	if(conn->rcnt != conn->scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
-	else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
-	#endif
-	*/
-
-
-
-
 	if (conn->scnt != conn->rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
 
         all_rcnts[thread_num] = conn->rcnt;
@@ -404,7 +347,7 @@ int main(int argc, char *argv[])
 {
 
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:k:")) != -1)
     switch (c)
 	{
 	  case 't':
@@ -424,6 +367,9 @@ int main(int argc, char *argv[])
 		break;
 	  case 'c':
 	  	SERVER_THREADS = atoi(optarg);
+		break;
+	  case 'k':
+	  	clientname = optarg;
 		break;
       default:
 	  	printf("Unrecognized command line argument\n");

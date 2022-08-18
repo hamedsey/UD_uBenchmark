@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 
 #pragma once
@@ -49,7 +49,7 @@ struct pingpong_dest {
 
 class RDMAConnection {
 public:
-	RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername,  char* clientname);
+	RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername,  char* clientname, int remote_qp0_in);
 	
 
 	int pp_get_port_info(struct ibv_context *context, int port, struct ibv_port_attr *attr);

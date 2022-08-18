@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 
 #ifndef _RDMACONNECTION_
@@ -147,9 +147,6 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		init_attr.cap.max_send_sge = 1;
 		init_attr.cap.max_recv_sge = 1;
 		init_attr.qp_type = IBV_QPT_UD;
-
-		//QPN Range: (0x000064,0x03ffff) 262043 total QPs possible in ancon testbed
-		//QPN Range: (0x000080,0x01ffff) 130944 total QPs possible in keg testbed
 
 		if(id == 0 && connection == 0) {
 			while(1)
@@ -325,18 +322,29 @@ struct pingpong_dest* RDMAConnection::pp_server_exch_dest(char *servername, char
 	if (!rem_dest)
 		return NULL;
 
-	/*
+	
 	char * pch;
-	pch = strtok (servername," ,.-");
+	pch = strtok (clientname," ,.-");
 	int i = 0;
+	rem_dest[0].gid = my_dest[0].gid;
 	while (pch != NULL)
 	{
-		rem_dest->gid.raw[12+i] = strtol(pch, NULL, 10);
+		rem_dest[0].gid.raw[12+i] = strtol(pch, NULL, 10);
 		i++;
 		pch = strtok (NULL, ".");
 	}
-	*/
 
+	pch = strtok (servername," ,.-");
+	i = 0;
+	rem_dest[1].gid = my_dest[1].gid;
+	while (pch != NULL)
+	{
+		rem_dest[1].gid.raw[12+i] = strtol(pch, NULL, 10);
+		i++;
+		pch = strtok (NULL, ".");
+	}
+	
+	/*
 	for(int i = 0; i < numConnections; i++) {
 		if(i == 0) {
 			rem_dest[i].gid = my_dest[i].gid;
@@ -353,6 +361,7 @@ struct pingpong_dest* RDMAConnection::pp_server_exch_dest(char *servername, char
 			rem_dest[i].gid.raw[15] = 21; // TODO: command line
 		}
 	}
+	*/
 
 	return rem_dest;
 }
@@ -420,9 +429,7 @@ int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, uns
 	wr.num_sge    = 1;
 	wr.opcode     = IBV_WR_SEND;
 	wr.send_flags = ctx->send_flags;
-	//if(opcode == 1) 
 	wr.wr.ud.ah = ctx->ah;
-	//else if(opcode == 0) wr.wr.ud.ah = ctx->ah_bf;
 
 	wr.wr.ud.remote_qpn  = qpn;
 	wr.wr.ud.remote_qkey = 0x11111111;
@@ -431,7 +438,7 @@ int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, uns
 	return ibv_post_send(ctx->qp, &wr, &bad_wr);
 }
 
-RDMAConnection::RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername, char* clientname)
+RDMAConnection::RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername, char* clientname, int remote_qp0_in)
 {
 	strncpy(ib_devname, ib_devname_in, 7);
 
@@ -457,8 +464,6 @@ RDMAConnection::RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* s
 	my_dest = (struct pingpong_dest *)malloc(numConnections*sizeof(struct pingpong_dest));
 
 	for(int i = 0; i < numConnections; i++) {
-		//ctx[i] = (struct pingpong_context *)malloc(sizeof(struct pingpong_context));
-		//memset(ctx[i], 0x00, sizeof(struct pingpong_context));
 		ctx[i] = pp_init_ctx(ib_dev, rx_depth, ib_port, use_event, id, i);
 		if (!ctx[i]) {
 			printf("context creation invalid \n");
@@ -495,6 +500,8 @@ RDMAConnection::RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* s
 
 	if(id == 0) {
 		rem_dest = pp_server_exch_dest(servername, clientname);
+		rem_dest[0].qpn = remote_qp0_in;
+		rem_dest[1].qpn = remote_qp0_in;
 
 		if (!rem_dest) {
 			printf("remote destination invalid \n");
@@ -512,7 +519,6 @@ RDMAConnection::RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* s
 			fprintf(stderr, "Couldn't connect to remote QP\n");
 			free(rem_dest);
 			rem_dest = NULL;
-			//goto out;
 		}
 
 		for(int r = 0; r < recv_bufs_num; r++) {
@@ -522,7 +528,7 @@ RDMAConnection::RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* s
 		if (routs < recv_bufs_num) {
 			fprintf(stderr, "Couldn't post -recv_bufs_num- receive requests (%d)\n", routs);
 		}
-		printf("outstanding recv requests %d\n", routs);
+		//printf("outstanding recv requests %d\n", routs);
 
 	}
 }
