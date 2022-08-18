@@ -18,7 +18,7 @@
 
 #include <infiniband/verbs.h>
 #include <linux/types.h>  //for __be32 type
-#include "ServerRDMAConnection.cc"
+#include "MiddleRDMAConnection.cc"
 #include <vector>
 #include <assert.h>
 #include <pthread.h> 

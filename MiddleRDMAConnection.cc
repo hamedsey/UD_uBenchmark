@@ -11,7 +11,7 @@
 
 #include <string>
 
-#include "ServerRDMAConnection.h"
+#include "MiddleRDMAConnection.h"
 
 #ifdef __linux__
 #include <malloc.h>
