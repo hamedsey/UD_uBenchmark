@@ -30,7 +30,7 @@
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 1				//enables round robin request distribution per thread
+#define RR 1 				//enables round robin request distribution per thread
 #define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
@@ -333,7 +333,8 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				offset = (offset+1)%SERVER_THREADS;
+				offset = (0x007 & (offset+1));// = (offset+1)%SERVER_THREADS;
+				//if(offset == SERVER_THREADS) offset = 0;
 				conn->dest_qpn = remote_qp0+offset;
 			#endif
 
@@ -427,8 +428,11 @@ void* client_threadfunc(void* x) {
 									#endif
 								}
 
-								#if RR
-									offset = (offset+1)%SERVER_THREADS;
+								#if RR	
+									offset = (0x007 & (offset+1));							
+                                					//offset++;// = (offset+1)%SERVER_THREADS;
+                        					        //if(offset == SERVER_THREADS) offset = 0;
+									//offset = (offset+1)%SERVER_THREADS;
 									conn->dest_qpn = remote_qp0+offset;
 								#endif		
 
@@ -554,7 +558,10 @@ void* client_threadfunc(void* x) {
 								}
 
 								#if RR
-									offset = (offset+1)%SERVER_THREADS;
+									offset = (0x007 & (offset+1));
+                                					//offset++;// = (offset+1)%SERVER_THREADS;
+					                                //if(offset == SERVER_THREADS) offset = 0;
+									//offset = (offset+1)%SERVER_THREADS;
 									conn->dest_qpn = remote_qp0+offset;
 								#endif		
 
@@ -604,23 +611,23 @@ void* client_threadfunc(void* x) {
 
 		for (int i = 0; i < window_size; i++) {
 
-			int req_lat = gen_latency(mean, distribution_mode,0);
-			req_lat = req_lat >> 4;
+			//int req_lat = gen_latency(mean, distribution_mode,0);
+			//req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
                 printf("lat = %d \n",req_lat); 
             #endif
-			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
+			//uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
+			//uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
 
 			#if debug 
 				printf("lower %d; upper %d\n", lat_lower, lat_upper);
 			#endif
 
-			conn->buf_send[i][1] = lat_lower;
-			conn->buf_send[i][0] = lat_upper;
+			//conn->buf_send[i][1] = lat_lower;
+			//conn->buf_send[i][0] = lat_upper;
 
 			//0 signals BF pkt came from client, 1 indicates to BF pkt came from server
-			conn->buf_send[i][2] = 0;
+			//conn->buf_send[i][2] = 0;
 
 			
 			conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
@@ -645,7 +652,10 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				offset = (offset+1)%SERVER_THREADS;
+				offset = (0x007 & (offset+1));
+                                //offset++;// = (offset+1)%SERVER_THREADS;
+                                //if(offset == SERVER_THREADS) offset = 0;
+				//offset = (offset+1)%SERVER_THREADS;
 				conn->dest_qpn = remote_qp0+offset;
 			#endif	
 
@@ -718,7 +728,7 @@ void* client_threadfunc(void* x) {
 
                             //#if 0
 						    if(conn->scnt < conn->iters) {
-							    
+							    /*
 								int req_lat = gen_latency(mean, distribution_mode,0);
 							    req_lat = req_lat >> 4;
                                 #if MEAS_GEN_LAT 
@@ -733,7 +743,7 @@ void* client_threadfunc(void* x) {
 
 							    conn->buf_send[a-num_bufs][1] = lat_lower;
 							    conn->buf_send[a-num_bufs][0] = lat_upper;
-								
+								*/
 							    int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
 							    if (success == EINVAL) printf("Invalid value provided in wr \n");
 							    else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
@@ -750,7 +760,10 @@ void* client_threadfunc(void* x) {
 							    }
                                 
 							    #if RR
-								    offset = (offset+1)%SERVER_THREADS;
+								    offset = (0x007 & (offset+1));
+                               					    //offset++;// = (offset+1)%SERVER_THREADS;
+					                            //if(offset == SERVER_THREADS) offset = 0;
+							    	    //offset = (offset+1)%SERVER_THREADS;
 								    conn->dest_qpn = remote_qp0+offset;
 							    #endif	
 
@@ -864,7 +877,7 @@ void* client_threadfunc(void* x) {
 		}
 		printf("avgRPS = %f \n",totalRPS/active_thread_num-1);
 		printf("total RPS = %d, total rcnt = %d, total scnt = %d \n", (int)totalRPS,(int)total_rcnt,(int)total_scnt) ;
-
+		sleep(10);
 		char* output_name;
     	asprintf(&output_name, "%s/%d_%d_%d.result", output_dir, window_size, active_thread_num, (int)totalRPS);
 		FILE *f = fopen(output_name, "wb");
@@ -917,7 +930,10 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				offset = (offset+1)%SERVER_THREADS;
+                                 offset = (0x007 & (offset+1));
+				//offset++;// = (offset+1)%SERVER_THREADS;
+                                //if(offset == SERVER_THREADS) offset = 0;
+				//offset = (offset+1)%SERVER_THREADS;
 				conn->dest_qpn = remote_qp0+offset;
 			#endif
 

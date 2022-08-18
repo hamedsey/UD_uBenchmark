@@ -69,7 +69,7 @@ public:
 	//const char                *servername = NULL;
 	unsigned int             connect_port = 18515;
 	int                      ib_port = 1;
-	unsigned int             rx_depth = 64;
+	unsigned int             rx_depth = 150;
 	unsigned int             size = 20;
 	long long int   		 iters = 1000000000;
 	long long int   		 sync_iters = 1000000;
@@ -85,7 +85,7 @@ public:
   	char ib_devname [7] = "mlx5_3";
 	int gidx = 3;
 	int page_size = sysconf(_SC_PAGESIZE);
-	static const unsigned int bufs_num = 64;	
+	static const unsigned int bufs_num = 150;	
 	static const unsigned int sync_bufs_num = 1;
 
 	char * buf_recv [bufs_num];
