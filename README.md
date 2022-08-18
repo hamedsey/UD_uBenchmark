@@ -99,7 +99,7 @@ Then, start the Middle host (usually the BlueField-2 DPU):
 Then, start the client, as explained previously. The only difference here is the use of [middle_qpn] which in the example above is 7488.
 
     ./UD_Client -w [window_size] -t [thread_num] -d [output_dir] -v [ib_devname] -g [gidx] -q [middle_qpn] -m [distribution_mode] -s [server IP addr] -c [number of middle host cores]
-    
+
 
 REPORTING RPS (requests per second)
     The average RPS per thread as well as average RPS across all threads is also reported at the end of each run.
@@ -118,3 +118,6 @@ example output from client after the end of a run:
     T2 DRAINED! - rcnt = 82933176, scnt = 82933176, routs = 0, souts = 0
 
     T1 DRAINED! - rcnt = 81939675, scnt = 81939675, routs = 0, souts = 
+
+
+For any questions, please feel free to contact me at hamed@gatech.edu
