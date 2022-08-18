@@ -816,7 +816,7 @@ void* client_threadfunc(void* x) {
             total_rcnt += all_rcnts[i];
             total_scnt += all_scnts[i];
 		}
-		printf("avgRPS = %f \n",totalRPS/active_thread_num-1);
+		//printf("avgRPS = %f \n",totalRPS/active_thread_num-1);
 		printf("total RPS = %d, total rcnt = %d, total scnt = %d \n", (int)totalRPS,(int)total_rcnt,(int)total_scnt) ;
 		sleep(10);
 		char* output_name;
