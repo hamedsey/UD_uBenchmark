@@ -459,7 +459,7 @@ void* client_threadfunc(void* x) {
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////
 	    ret = pthread_barrier_wait(&barrier);
-
+		printf("Completed test pkt! \n");
         sleep(5);
         printf("Started Measurement Thread \n");
 
@@ -754,9 +754,9 @@ void* client_threadfunc(void* x) {
 							
 							#if RR
 								offset = ((SERVER_THREADS-1) & (offset+1));
-												//offset++;// = (offset+1)%SERVER_THREADS;
-											//if(offset == SERVER_THREADS) offset = 0;
-									//offset = (offset+1)%SERVER_THREADS;
+								//offset++;// = (offset+1)%SERVER_THREADS;
+								//if(offset == SERVER_THREADS) offset = 0;
+								//offset = (offset+1)%SERVER_THREADS;
 								conn->dest_qpn = remote_qp0+offset;
 							#endif	
 
