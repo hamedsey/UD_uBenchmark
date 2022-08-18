@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 
 #include <stdio.h>
@@ -239,32 +239,31 @@ void* server_threadfunc(void* x) {
 			    fprintf(stderr, "poll CQ failed %d\n", ne);
 		    }
 	    for (i = 0; i < ne; ++i) {
-			    if (wc[i].status != IBV_WC_SUCCESS) {
-				    fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-					    ibv_wc_status_str(wc[i].status),
-					    wc[i].status, (int) wc[i].wr_id);
-			    }
+			if (wc[i].status != IBV_WC_SUCCESS) {
+				fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+					ibv_wc_status_str(wc[i].status),
+					wc[i].status, (int) wc[i].wr_id);
+			}
 
-			    int a = (int) wc[i].wr_id;
-			    switch (a) {
-				    case 0 ... num_bufs-1: // SEND_WRID
-					    ++conn->scnt;
-					    --conn->souts;
-					    //#if debug
-						    //printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-					    //#endif
-					    break;
+			int a = (int) wc[i].wr_id;
+			switch (a) {
+				case 0 ... num_bufs-1: // SEND_WRID
+					++conn->scnt;
+					--conn->souts;
+					//#if debug
+						//printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+					//#endif
+					break;
 
-				    case num_bufs ... 2*num_bufs-1:
-					    ++conn->rcnt;
-					    --conn->routs;
-					    //#if debug
-						    //printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-					    //#endif
-		}        
+				case num_bufs ... 2*num_bufs-1:
+					++conn->rcnt;
+					--conn->routs;
+					//#if debug
+						//printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+					//#endif
+			}        
 	    }
 	}
-	//}
 
 	if(conn->rcnt != conn->scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
 	else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 
 #pragma once

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021 Georgia Institute of Technology.  All rights reserved.
+ * Written by Hamed Seyedroudbari (Arm Research Intern - Summer 2022)
  */
 
 #ifndef _RDMACONNECTION_
@@ -145,9 +145,6 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		init_attr.cap.max_send_sge = 1;
 		init_attr.cap.max_recv_sge = 1;
 		init_attr.qp_type = IBV_QPT_UD;
-
-		//QPN Range: (0x000064,0x03ffff) 262043 total QPs possible in ancon testbed
-		//QPN Range: (0x000080,0x01ffff) 130944 total QPs possible in keg testbed
 
 		if(id == 0) {
 			while(1)
@@ -323,11 +320,6 @@ struct pingpong_dest* RDMAConnection::pp_server_exch_dest(char *servername)
 		i++;
 		pch = strtok (NULL, ".");
 	}
-
-	//rem_dest->gid.raw[12] = 10; // TODO: command line
-	//rem_dest->gid.raw[13] = 10; // TODO: command line
-	//rem_dest->gid.raw[14] = 1; // TODO: command line
-	//rem_dest->gid.raw[15] = 12; // TODO: command line
 	return rem_dest;
 }
 
