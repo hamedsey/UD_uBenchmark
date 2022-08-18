@@ -18,9 +18,11 @@ The microbenchmark can be run in two different ways:
 1. (P2P) Client <-> Server
 In this configuration, the client and server must be separate hosts/BlueField DPUs connected over the the network.
 
+          NETWORK
+CLIENT  < ------- >  SERVER
 
 --------------                -------------- 
-|            |     NETWORK    |	           |
+|            |     NETWORK    |	        |
 |   CLIENT   |   <--------->  |   SERVER   |
 |            |                |            |
 --------------                --------------
