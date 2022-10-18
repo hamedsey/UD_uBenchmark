@@ -25,6 +25,8 @@
 #define debug 0
 #define DRAIN_SERVER 0
 #define MEAS_TIME_ON_SERVER 0
+#define ENABLE_HT 1
+#define ENABLE_SERV_TIME 1
 
 
 uint32_t * all_rcnts;
@@ -90,7 +92,13 @@ void* server_threadfunc(void* x) {
 	
 	cpu_set_t cpuset;
     CPU_ZERO(&cpuset);       //clears the cpuset
-    CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
+
+    #if ENABLE_HT
+        if(thread_num < 8) CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
+	    else CPU_SET(24+(thread_num%8), &cpuset);
+    #else
+        CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
+    #endif
 
 	printf("T%d - qp = 0x%06x , %d \n",thread_num,conn->my_dest.qpn,conn->my_dest.qpn);
 
@@ -103,6 +111,7 @@ void* server_threadfunc(void* x) {
 	}
 	#if MEAS_TIME_ON_SERVER
 		struct timespec requestStart, requestEnd;
+        float sum = 0;
 	#endif
 	while (1) {
 		struct ibv_wc wc[num_bufs*2];
@@ -147,10 +156,6 @@ void* server_threadfunc(void* x) {
 
 			switch (a) {
 			case 0 ... num_bufs-1:
-				#if MEAS_TIME_ON_SERVER
-					clock_gettime(CLOCK_MONOTONIC, &requestEnd);
-					printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-				#endif
 
 				++conn->scnt;
 				--conn->souts;
@@ -176,24 +181,27 @@ void* server_threadfunc(void* x) {
 					printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
 				#endif
 				
-				/*
-				int sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
-				int sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
-				if (sleep_int_upper<0) sleep_int_upper+= 256;
-				if (sleep_int_lower<0) sleep_int_lower+= 256;	
-				unsigned int sleep_time = (sleep_int_lower + sleep_int_upper * 0x100) << 4;
-				//printf("sleep_time = %d \n",sleep_time);
-				my_sleep(sleep_time, thread_num);
-				*/
-				
+				#if ENABLE_SERV_TIME
+				    uint sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
+				    uint sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
+				    //if (sleep_int_upper<0) sleep_int_upper+= 256;
+				    //if (sleep_int_lower<0) sleep_int_lower+= 256;	
+				    unsigned int sleep_time = (sleep_int_lower + sleep_int_upper * 0x100) << 4;
+				    //unsigned int sleep_time = (sleep_int_lower + ((sleep_int_upper << 8) & 0x100)) << 4;
+				    //printf("sleep_time = %lu \n",sleep_time);
+				    my_sleep(sleep_time, thread_num);
+				    
+				    /*
+				    conn->buf_send[a-num_bufs][1] = sleep_int_lower;
+				    conn->buf_send[a-num_bufs][0] = sleep_int_upper;
+				    */
+				    //if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
+				    for(int q = 0; q <= 2; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+				#endif
+
 				conn->routs += !(conn->pp_post_recv(conn->ctx, a));
 				if (conn->routs != num_bufs ) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
-				/*
-				conn->buf_send[a-num_bufs][1] = sleep_int_lower;
-				conn->buf_send[a-num_bufs][0] = sleep_int_upper;
-				*/
-				//if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
-				for(int q = 0; q <= 5; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+
 				
 				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
 				//printf("src qp = %d \n",wc[i].src_qp);
@@ -210,6 +218,16 @@ void* server_threadfunc(void* x) {
 						printf("send posted... souts = %d, \n",conn->souts);
 					#endif
 				}
+				#if MEAS_TIME_ON_SERVER
+					clock_gettime(CLOCK_MONOTONIC, &requestEnd);
+                    //if(conn->rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+                    sum = sum + ((requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+				    if(conn->rcnt % 10000000 == 0) {
+                        printf("sum = %f, avg latency = %f ns \n",sum, sum/10000000);
+                        sum = 0;
+                    }
+                    //}
+				#endif
 
 				break;
 			}

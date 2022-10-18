@@ -55,7 +55,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 	if (!ctx)
 		return NULL;
 
-	ctx->send_flags = IBV_SEND_SIGNALED;
+	ctx->send_flags = IBV_SEND_SIGNALED|IBV_SEND_INLINE;
 	ctx->rx_depth   = rx_depth;
 
 
