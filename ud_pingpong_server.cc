@@ -182,13 +182,13 @@ void* server_threadfunc(void* x) {
 				#endif
 				
 				#if ENABLE_SERV_TIME
-				    uint sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
-				    uint sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
+				    uint8_t sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
+				    uint8_t sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
 				    //if (sleep_int_upper<0) sleep_int_upper+= 256;
 				    //if (sleep_int_lower<0) sleep_int_lower+= 256;	
 				    unsigned int sleep_time = (sleep_int_lower + sleep_int_upper * 0x100) << 4;
 				    //unsigned int sleep_time = (sleep_int_lower + ((sleep_int_upper << 8) & 0x100)) << 4;
-				    //printf("sleep_time = %lu \n",sleep_time);
+				    //if(sleep_time > 10000) printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n",sleep_int_lower, sleep_int_upper, sleep_time);
 				    my_sleep(sleep_time, thread_num);
 				    
 				    /*
