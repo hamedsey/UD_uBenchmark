@@ -72,7 +72,7 @@ public:
 	unsigned int             rx_depth = 150;
 	unsigned int             size = 20;
 	long long int   		 iters = 1000000000;
-	long long int   		 sync_iters = 100000000;
+	long long int   		 sync_iters = 1000000;
 	int                      use_event = 0;
 	unsigned int             routs, souts;
 	unsigned int             rcnt, scnt = 0;
