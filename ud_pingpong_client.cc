@@ -35,7 +35,6 @@
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 1
-#define SERVICE_TIME_SIZE 10000000
 
 enum {
 	FIXED = 0,
@@ -130,7 +129,7 @@ double rand_gen() {
    return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. );
 }
 
-int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
+int gen_latency(int mean, int mode, int isMeasThread) {
     if(isMeasThread == 1) return mean;
 
 	if (mode == FIXED) {
@@ -146,15 +145,10 @@ int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
 	} else if (mode == UNIFORM) {
 		return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. )*mean*2;
 	} else if (mode == EXPONENTIAL) {
-		//std::random_device rd{};
-		//std::mt19937 gen{rd()};
-		//std::exponential_distribution<double> exp{1/(double)mean};	
-
-        static int index = 0;
-        int result = serviceTime[index];
-        if(index = SERVICE_TIME_SIZE-1) index = 0;	
-        else index++;
-
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		std::exponential_distribution<double> exp{1/(double)mean};
+		int result = exp(gen);
         #if MEAS_GEN_LAT 
             printf("gen lat = %d \n",result); 
         #endif
@@ -289,7 +283,6 @@ void* client_threadfunc(void* x) {
     printf("T%d - remote_qp0 = 0x%06x , %d,       dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
 
 	if(thread_num == active_thread_num - 1) {
-        uint64_t *serviceTime;
 		struct timespec requestStart, requestEnd;
 		const int num_bufs = conn->sync_bufs_num;
 	
@@ -406,7 +399,7 @@ void* client_threadfunc(void* x) {
 							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
 
 							if(conn->scnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1, serviceTime);
+								int req_lat = gen_latency(mean, distribution_mode,1);
 								req_lat = req_lat >> 4;
                                 #if MEAS_GEN_LAT 
                                     printf("lat = %d \n",req_lat); 
@@ -536,7 +529,7 @@ void* client_threadfunc(void* x) {
 							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
 
 							if(conn->scnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1, serviceTime);
+								int req_lat = gen_latency(mean, distribution_mode,1);
 								req_lat = req_lat >> 4;
                                 #if MEAS_GEN_LAT 
                                     printf("lat = %d \n",req_lat); 
@@ -602,15 +595,6 @@ void* client_threadfunc(void* x) {
 
 	}
 	else if (thread_num < active_thread_num - 1){
-		std::random_device rd{};
-		std::mt19937 gen{rd()};
-		std::exponential_distribution<double> exp{1/(double)mean};
-		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
-        for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = exp(gen);
-        //if(thread_num < 3) {
-        //    for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
-        //    printf("\n");
-        //}
 	    ret = pthread_barrier_wait(&barrier);
         //sleep(1);
         //printf("T%d started \n",thread_num);
@@ -629,14 +613,14 @@ void* client_threadfunc(void* x) {
 
 		for (int i = 0; i < window_size; i++) {
 
-			int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
+			int req_lat = gen_latency(mean, distribution_mode,0);
 			req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
                 printf("lat = %d \n",req_lat); 
             #endif
 			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
 			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
-		    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
+
 			#if debug 
 				printf("lower %d; upper %d\n", lat_lower, lat_upper);
 			#endif
@@ -743,14 +727,14 @@ void* client_threadfunc(void* x) {
 						//#if 0
 						if(conn->scnt < conn->iters) {
 							
-							int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
+							int req_lat = gen_latency(mean, distribution_mode,0);
 							req_lat = req_lat >> 4;
 							#if MEAS_GEN_LAT 
 								printf("lat = %d \n",req_lat); 
 							#endif
 							uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
 							uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-		                    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
+						
 							#if debug 
 								printf("lower %d; upper %d\n", lat_lower, lat_upper);
 							#endif

@@ -25,7 +25,7 @@
 #define debug 0
 #define DRAIN_SERVER 0
 #define MEAS_TIME_ON_SERVER 0
-#define ENABLE_HT 1
+#define ENABLE_HT 0
 #define ENABLE_SERV_TIME 1
 
 
@@ -196,13 +196,12 @@ void* server_threadfunc(void* x) {
 				    conn->buf_send[a-num_bufs][0] = sleep_int_upper;
 				    */
 				    //if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
-				    for(int q = 0; q <= 2; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+					for(int q = 0; q <= 2; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
 				#endif
 
 				conn->routs += !(conn->pp_post_recv(conn->ctx, a));
-				if (conn->routs != num_bufs ) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
+				if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
 
-				
 				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
 				//printf("src qp = %d \n",wc[i].src_qp);
 				if (success == EINVAL) printf("Invalid value provided in wr \n");
@@ -220,15 +219,15 @@ void* server_threadfunc(void* x) {
 				}
 				#if MEAS_TIME_ON_SERVER
 					clock_gettime(CLOCK_MONOTONIC, &requestEnd);
-                    //if(conn->rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-                    sum = sum + ((requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-				    if(conn->rcnt % 10000000 == 0) {
-                        printf("sum = %f, avg latency = %f ns \n",sum, sum/10000000);
-                        sum = 0;
-                    }
-                    //}
+					//if(conn->rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+					sum = sum + ((requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+					if(conn->rcnt % 10000000 == 0) {
+						printf("sum = %f, avg latency = %f ns \n",sum, sum/10000000);
+						sum = 0;
+					}
+					//}
 				#endif
-
+				
 				break;
 			}
 		}
