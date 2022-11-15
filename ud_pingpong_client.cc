@@ -24,18 +24,19 @@
 #include <vector>
 #include <sys/mman.h>
 #include <pthread.h> 
+#include </coc/projects/hseyedro3/arm/works/fanout_ubenchmark/spookyhash.cc>
 
 //#define active_thread_num 12+1  		//n loading threads,1 meas. thread 
 #define debug 0
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 0 				//enables round robin request distribution per thread
+#define RR 0			//enables round robin request distribution per thread
 #define RANDQP 1				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 1
-#define SERVICE_TIME_SIZE 0x8000
+#define SERVICE_TIME_SIZE 10000000
 
 enum {
 	FIXED = 0,
@@ -131,30 +132,8 @@ double rand_gen() {
 }
 
 int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
-    
-	if(isMeasThread == 1) return mean;
-	//else if (mode == FIXED) return mean;
-	else {
-		static uint16_t index = 0;
-		int result = serviceTime[index];
-		//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
-		if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
-			//printf("worked!, index = %lu \n",index);
-			index = 0;
-		}
-		else {
-			//printf("index = %lu \n",index);
-			index++;
-		}
+    if(isMeasThread == 1) return mean;
 
-		//if(result != 1000) printf("index = %lu, wrong value = %d \n", index, result);
-		#if MEAS_GEN_LAT 
-			printf("gen lat = %d \n",result); 
-		#endif
-		if (result < 0) result = 0;
-		return result;
-	}
-	/*
 	if (mode == FIXED) {
 		return mean;
 	} else if (mode ==NORMAL) {
@@ -196,7 +175,6 @@ int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
 	} else {
 		return mean;
 	}
-	*/
 }
 
 
@@ -206,64 +184,14 @@ uint8_t genRandDestQP(uint8_t thread_num) {
 		struct timespec randStart, randEnd;
 		clock_gettime(CLOCK_MONOTONIC, &randStart);
 	#endif
-
-	//UNCOMMENT ONE OF 4 RANDOM DISTRIBTIONS
 	
-	//(1)
-	/*
-	//period 2^96-1unsigned long t;
-	static unsigned long x=123456789, y=362436069, z=521288629, t;
-
-	x ^= x << (16-thread_num);
-	x ^= x >> 5;
-	x ^= x << 1;
-
-	t = x;
-	x = y;
-	y = z;
-	z = t ^ x ^ y;
-
-	//z = thread_num;
-	//uint8_t ret = ((z >> 2) & 1u) & ((z >> 3) & 1u) ? (z & 3u) :(z & 0xf);
-	uint8_t ret = z%12;
-	*/
-
-	//(2)
-	/*
-	static unsigned int z1 = 12345, z2 = 12345, z3 = 12345, z4 = 12345;
-	unsigned int b;
-	b  = ((z1 << 6) ^ z1) >> (13-thread_num);
-	z1 = ((z1 & 4294967294U) << 18) ^ b;
-	b  = ((z2 << 2) ^ z2) >> 27; 
-	z2 = ((z2 & 4294967288U) << 2) ^ b;
-	b  = ((z3 << 13) ^ z3) >> 21;
-	z3 = ((z3 & 4294967280U) << 7) ^ b;
-	b  = ((z4 << 3) ^ z4) >> 12;
-	z4 = ((z4 & 4294967168U) << 13) ^ b;
-
-	unsigned int z = (z1 ^ z2 ^ z3 ^ z4);
-	//uint8_t ret = ((z >> 2) & 1u) & ((z >> 3) & 1u) ? (z & 3u) :(z & 0xf);
-	uint8_t ret = z%12;
-	*/
-
-	//(3)
-	
-	static __uint64_t g_lehmer32_state = 0x60bee2bee120fc15;
+	static uint64_t g_lehmer32_state = 0x60bee2bee120fc15;
 	g_lehmer32_state *= 0xe4dd58b5;
-	uint8_t ret = (g_lehmer32_state >> (32-2*thread_num)) % SERVER_THREADS;
-	
+	//uint8_t ret = (g_lehmer32_state >> (32-2*thread_num)) % SERVER_THREADS;
 
-	//(4)
-	/*
-	static uint64_t shuffle_table[4] = {1, 2, 3, 4};
-	uint64_t s1 = shuffle_table[0];
-	uint64_t s0 = shuffle_table[1];
-	uint64_t result = s0 + s1;
-	shuffle_table[0] = s0;
-	s1 ^= s1 << 23;
-	shuffle_table[1] = s1 ^ s0 ^ (s1 >> 18) ^ (s0 >> 5);
-	uint8_t ret = result % 12;
-	*/
+	uint8_t ret = (SpookyHash::Hash32(to_string(g_lehmer32_state).c_str(), 8, thread_num)) % SERVER_THREADS;
+
+	
 
 	#if MEAS_RAND_NUM_GEN_LAT
 		clock_gettime(CLOCK_MONOTONIC, &randEnd);
@@ -307,7 +235,7 @@ void* client_threadfunc(void* x) {
 	conn->dest_qpn = remote_qp0+offset;
 
 	struct timeval start, end;
-	int mean = 2000;
+	int mean = 1000;
 
     printf("T%d - remote_qp0 = 0x%06x , %d,       dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
 
@@ -625,63 +553,43 @@ void* client_threadfunc(void* x) {
 
 	}
 	else if (thread_num < active_thread_num - 1){
-		/*
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
-		std::exponential_distribution<double> exp;
-		std::discrete_distribution<> bm;
-
-		if(distribution_mode == FIXED) ;
-		else if (distribution_mode == EXPONENTIAL) std::exponential_distribution<double> exp{1/(double)mean};
-		else if (distribution_mode == BIMODAL) std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
-		else { 
-			perror("Invalid service time distribution \n");
-			exit(1);
-		}
+		std::exponential_distribution<double> exp{1/(double)mean};
 		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
-        for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) 
-			if(distribution_mode == FIXED) serviceTime[i] = mean;
-			else if(distribution_mode == EXPONENTIAL) serviceTime[i] = exp(gen);
-			else {
-				int result = bm(gen);
-				printf("result = %d \n",result);
-				if (result == 0) serviceTime[i] = mean;
-				else serviceTime[i] = mean*bimodal_ratio;
-			}
-        if(thread_num < 3) {
-            for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
-            printf("\n");
-        }
-		*/
+        for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = exp(gen);
+        //if(thread_num < 3) {
+        //    for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
+        //    printf("\n");
+        //}
+		uint64_t completedFanouts = 0;
+		uint64_t fanoutSize = 1;
+		uint64_t totalFanouts = window_size/fanoutSize;
+		uint64_t *pending = (uint64_t*)malloc(totalFanouts*sizeof(uint64_t)); 
+	
+		//uint64_t *fanoutSizes = (uint64_t*)malloc(totalFanouts*sizeof(uint64_t)); 
+		//uint64_t *firstBuffer = (uint64_t*)malloc(totalFanouts*sizeof(uint64_t)); 
+		//uint64_t *lastBuffer = (uint64_t*)malloc(totalFanouts*sizeof(uint64_t)); 
 
-		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+		struct timespec *firstTime = (struct timespec *)malloc(totalFanouts*sizeof(struct timespec));
+		struct timespec *lastTime = (struct timespec *)malloc(totalFanouts*sizeof(struct timespec));
 
-		if(distribution_mode == FIXED) for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = mean;
-		else if(distribution_mode == EXPONENTIAL) {
-			std::random_device rd{};
-			std::mt19937 gen{rd()};
-			std::exponential_distribution<double> exp{1/(double)mean};
-			for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = exp(gen);
-		}
-		else if(distribution_mode == BIMODAL) {
-			std::random_device rd{};
-			std::mt19937 gen{rd()};
-			std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
-			for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
-				int result = bm(gen);
-				//printf("result = %d \n",result);
-				if (result == 0) serviceTime[i] = mean;
-				else serviceTime[i] = mean*bimodal_ratio;
-			}
-		}
 
-		/*
-        if(thread_num < 3) {
-            for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
-            printf("\n");
-        }
-		*/
+		//may be good to also track the fanout sizes and the first send buffer corresponding to it in the buffer
+
+		for(int i = 0; i < totalFanouts; i++) pending[i] = 0;
+
+		struct timespec *reqStart = (struct timespec *)malloc(window_size*sizeof(struct timespec));
+		struct timespec *reqEnd = (struct timespec *)malloc(window_size*sizeof(struct timespec));
+
+		
+		uint64_t fanoutNumber = 0;
+		uint64_t reqNumber = 0;
+		uint64_t reqCount = 0;
+		uint64_t sum = 0;
+		uint64_t reqLatency = 0;
 	    ret = pthread_barrier_wait(&barrier);
+		
         //sleep(1);
         //printf("T%d started \n",thread_num);
         //if(thread_num != 5) sleep(10);
@@ -698,7 +606,6 @@ void* client_threadfunc(void* x) {
 		#endif
 
 		for (int i = 0; i < window_size; i++) {
-
 			int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
 			req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
@@ -711,8 +618,20 @@ void* client_threadfunc(void* x) {
 				printf("lower %d; upper %d\n", lat_lower, lat_upper);
 			#endif
 
-			conn->buf_send[i][1] = lat_lower;
 			conn->buf_send[i][0] = lat_upper;
+			conn->buf_send[i][1] = lat_lower;
+			conn->buf_send[i][2] = i/fanoutSize; //batch number
+			conn->buf_send[i][3] = reqCount; //request number
+			pending[i/fanoutSize]++;
+
+			clock_gettime(CLOCK_MONOTONIC, &reqStart[i]);
+
+			if(reqCount == 0) {
+				clock_gettime(CLOCK_MONOTONIC, &firstTime[i/fanoutSize]);
+				reqCount++;
+			}
+			else if (reqCount == fanoutSize-1) reqCount = 0;
+			else reqCount++;
 			
 			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
 			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
@@ -749,20 +668,28 @@ void* client_threadfunc(void* x) {
 				
             //my_sleep(10, thread_num);
 		}
+		sleep(1);
 
 		if (gettimeofday(&start, NULL)) {
 			perror("gettimeofday");
 		}								
-		
+
 		double prev_clock = now();
+
+		struct timespec pollBegin, pollEnd; 
+		bool measured = false;
 		while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
+			if(measured == false) {
+				clock_gettime(CLOCK_MONOTONIC, &pollBegin);
+				measured = true;
+			}
 			if (terminate_load == 1) break;
 
-			struct ibv_wc wc[num_bufs*2];
+			struct ibv_wc wc[fanoutSize*2];
 			int ne, i;
 
 			do {
-				ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
+				ne = ibv_poll_cq(conn->ctx->cq, 2*fanoutSize, wc);
 				if (ne < 0) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
 				}
@@ -773,6 +700,7 @@ void* client_threadfunc(void* x) {
 
 			} while (!conn->use_event && ne < 1);
 
+			//printf("polled %d items \n", ne);
 			for (i = 0; i < ne; ++i) {
 				if (wc[i].status != IBV_WC_SUCCESS) {
 					fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
@@ -807,53 +735,93 @@ void* client_threadfunc(void* x) {
 						//if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
 
 
+						fanoutNumber = conn->buf_recv[a-num_bufs][42];
+						reqNumber = conn->buf_recv[a-num_bufs][43];
+						pending[fanoutNumber]--;
+						clock_gettime(CLOCK_MONOTONIC, &reqEnd[a-num_bufs]);
+						reqLatency = (reqEnd[a-num_bufs].tv_sec-reqStart[a-num_bufs].tv_sec)/1e-9 +(reqEnd[a-num_bufs].tv_nsec-reqStart[a-num_bufs].tv_nsec);
+                    	//printf("req latency = %f ns \n",(reqEnd[a-num_bufs].tv_sec-reqStart[a-num_bufs].tv_sec)/1e-9 +(reqEnd[a-num_bufs].tv_nsec-reqStart[a-num_bufs].tv_nsec));
+
 						if(!conn->pp_post_recv(conn->ctx, a, false)) ++conn->routs;
 						if (conn->routs != window_size) fprintf(stderr,"Loading thread %d couldn't post receive (%d)\n", thread_num, conn->routs);
+						
 
-						//#if 0
-						if(conn->scnt < conn->iters) {
-							
-							int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
-							req_lat = req_lat >> 4;
-							#if MEAS_GEN_LAT 
-								printf("lat = %d \n",req_lat); 
-							#endif
-							uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-							uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-		                    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
-							#if debug 
-								printf("lower %d; upper %d\n", lat_lower, lat_upper);
-							#endif
-
-							conn->buf_send[a-num_bufs][1] = lat_lower;
-							conn->buf_send[a-num_bufs][0] = lat_upper;
-							
-							int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
-							if (success == EINVAL) printf("Invalid value provided in wr \n");
-							else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-							else if (success == EFAULT) printf("Invalid value provided in qp \n");
-							else if (success != 0) {
-								printf("success = %d, \n",success);
-								fprintf(stderr, "Couldn't post send 2 \n");
+						if(pending[fanoutNumber] == 0) {
+							clock_gettime(CLOCK_MONOTONIC, &pollEnd);
+                    		//printf("poll %d latency = %f ns \n",completedFanouts,(pollEnd.tv_sec-pollBegin.tv_sec)/1e-9 +(pollEnd.tv_nsec-pollBegin.tv_nsec));
+							uint64_t pollLatency = (pollEnd.tv_sec-pollBegin.tv_sec)/1e-9 +(pollEnd.tv_nsec-pollBegin.tv_nsec);
+							if(pollLatency < 10000) {
+								sum += pollLatency;
+								completedFanouts++;
 							}
-							else {
-								++conn->souts;
-								#if debug
-									printf("send posted... souts = %d, \n",conn->souts);
-								#endif
-							}
-							
-							#if RR
-								offset = ((SERVER_THREADS-1) & (offset+1));
-								//offset++;// = (offset+1)%SERVER_THREADS;
-								//if(offset == SERVER_THREADS) offset = 0;
-								//offset = (offset+1)%SERVER_THREADS;
-								conn->dest_qpn = remote_qp0+offset;
-							#endif	
 
-							#if RANDQP
-								conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-							#endif
+							if(completedFanouts % 100 == 0) {
+								printf("avg poll latency = %lu ns \n",sum/100);
+								sum = 0;
+							}
+
+							clock_gettime(CLOCK_MONOTONIC, &lastTime[fanoutNumber]);
+                    		printf("fanout %d E2E latency = %f ns \n",completedFanouts,(lastTime[fanoutNumber].tv_sec-firstTime[fanoutNumber].tv_sec)/1e-9 +(lastTime[fanoutNumber].tv_nsec-firstTime[fanoutNumber].tv_nsec));
+							reqCount = 0;
+							measured = false;
+							if(conn->scnt < conn->iters) {
+								for (int j = fanoutNumber*fanoutSize; j < (fanoutNumber*fanoutSize)+fanoutSize; j++) {
+									int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
+									req_lat = req_lat >> 4;
+									#if MEAS_GEN_LAT 
+										printf("lat = %d \n",req_lat); 
+									#endif
+									uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
+									uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
+									//printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
+									#if debug 
+										printf("lower %d; upper %d\n", lat_lower, lat_upper);
+									#endif
+
+									conn->buf_send[j][0] = lat_upper;
+									conn->buf_send[j][1] = lat_lower;
+									conn->buf_send[j][2] = fanoutNumber; //batch number
+									conn->buf_send[j][3] = reqCount; //request number
+									pending[fanoutNumber]++;
+
+									clock_gettime(CLOCK_MONOTONIC, &reqStart[j]);
+
+									if(reqCount == 0) {
+										clock_gettime(CLOCK_MONOTONIC, &firstTime[fanoutNumber]);
+										reqCount++;
+									}
+									else if (reqCount == fanoutSize-1) reqCount = 0;
+									else reqCount++;
+									
+									int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, j);
+									if (success == EINVAL) printf("Invalid value provided in wr \n");
+									else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+									else if (success == EFAULT) printf("Invalid value provided in qp \n");
+									else if (success != 0) {
+										printf("success = %d, \n",success);
+										fprintf(stderr, "Couldn't post send 2 \n");
+									}
+									else {
+										++conn->souts;
+										#if debug
+											printf("send posted... souts = %d, \n",conn->souts);
+										#endif
+									}
+									
+									#if RR
+										offset = ((SERVER_THREADS-1) & (offset+1));
+										//offset++;// = (offset+1)%SERVER_THREADS;
+										//if(offset == SERVER_THREADS) offset = 0;
+										//offset = (offset+1)%SERVER_THREADS;
+										conn->dest_qpn = remote_qp0+offset;
+									#endif	
+
+									#if RANDQP
+										conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
+									#endif
+								}
+							}
+							//sleep(1);
 						}
 						//#endif
 					

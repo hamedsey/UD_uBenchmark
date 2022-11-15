@@ -26,21 +26,8 @@
 #./run_client_rev.sh fixed_RANDOM_5x_rev 6912 FIXED 192.168.1.5 mlx5_1 3
 #./run_client_rev.sh expo_RANDOM_5x_rev 6912 EXPONENTIAL 192.168.1.5 mlx5_1 3
 
-#!/usr/bin/env bash
-#make
-#i=1
-qpn=$(echo $1)
-
-
-#sudo /etc/init.d/openibd restart
-#sudo ip route del 192.168.1.0/255.255.255.0 dev enp59s0f0
-#sudo ip route add 192.168.1.5 dev enp59s0f0
-#sudo ifconfig enp59s0f0 mtu 9000 up
-
-#./run_client.sh RAND_fixed_2us $qpn FIXED 192.168.1.5 mlx5_0 3 12
-#./run_client.sh RAND_expo_2us $qpn EXPONENTIAL 192.168.1.5 mlx5_0 3 12
-#./run_client.sh 1c_bimodal_2us $qpn BIMODAL 192.168.1.5 mlx5_0 3 5 10 1
-./run_client.sh 1c_bimodal_2us $qpn BIMODAL 192.168.1.5 mlx5_0 3 10 40 1
+#./run_client.sh JSQ_fixed_1us_16HT 16128 FIXED 192.168.1.5 mlx5_0 3
+./run_client.sh JLQ_fixed_1us_16HT 24192 FIXED 192.168.1.5 mlx5_0 3
 
 #./run_client.sh JLQ_expo_1us_16HT 16128 FIXED 192.168.1.5 mlx5_0 3
 #./run_client.sh JLQ_expo_1us_16HT 16128 EXPONENTIAL 192.168.1.5 mlx5_0 3
