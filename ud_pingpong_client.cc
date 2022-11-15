@@ -35,6 +35,9 @@
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 1
+#define SERVICE_TIME_SIZE 0x8000
+#define WAIT_4_N_RESP 1
+#define INIT_FRAC_2_SEND 32
 
 enum {
 	FIXED = 0,
@@ -104,8 +107,8 @@ static void usage(const char *argv0)
 */
 
 
-/*
-inline void my_sleep(uint n, int thread_num) {
+
+inline void my_sleep(uint n) {
 	//if(thread_num ==0) printf("mysleep = %d \n",n);
 	struct timespec ttime,curtime;
 	clock_gettime(CLOCK_MONOTONIC,&ttime);
@@ -121,7 +124,6 @@ inline void my_sleep(uint n, int thread_num) {
 
 	return;
 }
-*/
 
 
 double rand_gen() {
@@ -129,9 +131,31 @@ double rand_gen() {
    return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. );
 }
 
-int gen_latency(int mean, int mode, int isMeasThread) {
-    if(isMeasThread == 1) return mean;
+int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
+    
+	if(isMeasThread == 1) return mean;
+	//else if (mode == FIXED) return mean;
+	else {
+		static uint16_t index = 0;
+		int result = serviceTime[index];
+		//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
+		if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
+			//printf("worked!, index = %lu \n",index);
+			index = 0;
+		}
+		else {
+			//printf("index = %lu \n",index);
+			index++;
+		}
 
+		//if(result != 1000) printf("index = %lu, wrong value = %d \n", index, result);
+		#if MEAS_GEN_LAT 
+			printf("gen lat = %d \n",result); 
+		#endif
+		if (result < 0) result = 0;
+		return result;
+	}
+	/*
 	if (mode == FIXED) {
 		return mean;
 	} else if (mode ==NORMAL) {
@@ -145,10 +169,15 @@ int gen_latency(int mean, int mode, int isMeasThread) {
 	} else if (mode == UNIFORM) {
 		return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. )*mean*2;
 	} else if (mode == EXPONENTIAL) {
-		std::random_device rd{};
-		std::mt19937 gen{rd()};
-		std::exponential_distribution<double> exp{1/(double)mean};
-		int result = exp(gen);
+		//std::random_device rd{};
+		//std::mt19937 gen{rd()};
+		//std::exponential_distribution<double> exp{1/(double)mean};	
+
+        static int index = 0;
+        int result = serviceTime[index];
+        if(index = SERVICE_TIME_SIZE-1) index = 0;	
+        else index++;
+
         #if MEAS_GEN_LAT 
             printf("gen lat = %d \n",result); 
         #endif
@@ -168,6 +197,7 @@ int gen_latency(int mean, int mode, int isMeasThread) {
 	} else {
 		return mean;
 	}
+	*/
 }
 
 
@@ -283,6 +313,7 @@ void* client_threadfunc(void* x) {
     printf("T%d - remote_qp0 = 0x%06x , %d,       dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
 
 	if(thread_num == active_thread_num - 1) {
+        uint64_t *serviceTime;
 		struct timespec requestStart, requestEnd;
 		const int num_bufs = conn->sync_bufs_num;
 	
@@ -320,7 +351,7 @@ void* client_threadfunc(void* x) {
 
 			int success = conn->pp_post_send(conn->ctx, conn->dest_qpn /*conn->rem_dest->qpn*/, conn->size, i);
 			if (success == EINVAL) printf("Invalid value provided in wr \n");
-			else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+			else if (success == ENOMEM)	printf("1. Send Queue is full or not enough resources to complete this operation \n");
 			else if (success == EFAULT) printf("Invalid value provided in qp \n");
 			else if (success != 0) {
 				printf("success = %d, \n",success);
@@ -399,7 +430,7 @@ void* client_threadfunc(void* x) {
 							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
 
 							if(conn->scnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1);
+								int req_lat = gen_latency(mean, distribution_mode,1, serviceTime);
 								req_lat = req_lat >> 4;
                                 #if MEAS_GEN_LAT 
                                     printf("lat = %d \n",req_lat); 
@@ -416,7 +447,7 @@ void* client_threadfunc(void* x) {
 
 								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
 								if (success == EINVAL) printf("Invalid value provided in wr \n");
-								else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+								else if (success == ENOMEM)	printf("2. Send Queue is full or not enough resources to complete this operation \n");
 								else if (success == EFAULT) printf("Invalid value provided in qp \n");
 								else if (success != 0) {
 									printf("success = %d, \n",success);
@@ -529,7 +560,7 @@ void* client_threadfunc(void* x) {
 							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
 
 							if(conn->scnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1);
+								int req_lat = gen_latency(mean, distribution_mode,1, serviceTime);
 								req_lat = req_lat >> 4;
                                 #if MEAS_GEN_LAT 
                                     printf("lat = %d \n",req_lat); 
@@ -546,7 +577,7 @@ void* client_threadfunc(void* x) {
 
 								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
 								if (success == EINVAL) printf("Invalid value provided in wr \n");
-								else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+								else if (success == ENOMEM)	printf("3. Send Queue is full or not enough resources to complete this operation \n");
 								else if (success == EFAULT) printf("Invalid value provided in qp \n");
 								else if (success != 0) {
 									printf("success = %d, \n",success);
@@ -595,6 +626,62 @@ void* client_threadfunc(void* x) {
 
 	}
 	else if (thread_num < active_thread_num - 1){
+		/*
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		std::exponential_distribution<double> exp;
+		std::discrete_distribution<> bm;
+
+		if(distribution_mode == FIXED) ;
+		else if (distribution_mode == EXPONENTIAL) std::exponential_distribution<double> exp{1/(double)mean};
+		else if (distribution_mode == BIMODAL) std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
+		else { 
+			perror("Invalid service time distribution \n");
+			exit(1);
+		}
+		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+        for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) 
+			if(distribution_mode == FIXED) serviceTime[i] = mean;
+			else if(distribution_mode == EXPONENTIAL) serviceTime[i] = exp(gen);
+			else {
+				int result = bm(gen);
+				printf("result = %d \n",result);
+				if (result == 0) serviceTime[i] = mean;
+				else serviceTime[i] = mean*bimodal_ratio;
+			}
+        if(thread_num < 3) {
+            for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
+            printf("\n");
+        }
+		*/
+
+		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+
+		if(distribution_mode == FIXED) for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = mean;
+		else if(distribution_mode == EXPONENTIAL) {
+			std::random_device rd{};
+			std::mt19937 gen{rd()};
+			std::exponential_distribution<double> exp{1/(double)mean};
+			for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = exp(gen);
+		}
+		else if(distribution_mode == BIMODAL) {
+			std::random_device rd{};
+			std::mt19937 gen{rd()};
+			std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
+			for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+				int result = bm(gen);
+				//printf("result = %d \n",result);
+				if (result == 0) serviceTime[i] = mean;
+				else serviceTime[i] = mean*bimodal_ratio;
+			}
+		}
+
+		/*
+        if(thread_num < 3) {
+            for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
+            printf("\n");
+        }
+		*/
 	    ret = pthread_barrier_wait(&barrier);
         //sleep(1);
         //printf("T%d started \n",thread_num);
@@ -611,16 +698,17 @@ void* client_threadfunc(void* x) {
 			printf("T%d - remote_qp0 = %d \n",thread_num,remote_qp0);
 		#endif
 
-		for (int i = 0; i < window_size; i++) {
+		int i;
+		for (i = 0; i < window_size/INIT_FRAC_2_SEND; i++) {
 
-			int req_lat = gen_latency(mean, distribution_mode,0);
+			int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
 			req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
                 printf("lat = %d \n",req_lat); 
             #endif
 			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
 			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
-
+		    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
 			#if debug 
 				printf("lower %d; upper %d\n", lat_lower, lat_upper);
 			#endif
@@ -634,7 +722,7 @@ void* client_threadfunc(void* x) {
 
 			int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, i);
 			if (success == EINVAL) printf("Invalid value provided in wr \n");
-			else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation 1 \n");
+			else if (success == ENOMEM)	printf("4. Send Queue is full or not enough resources to complete this operation 1 \n");
 			else if (success == EFAULT) printf("Invalid value provided in qp \n");
 			else if (success != 0) {
 				printf("success = %d, \n",success);
@@ -668,14 +756,20 @@ void* client_threadfunc(void* x) {
 			perror("gettimeofday");
 		}								
 		
+        struct timespec startInterArrTimer;
+        struct timespec checkInterArrTimer;
+        double elapedInterArrTime = 0;
+
 		double prev_clock = now();
+		clock_gettime(CLOCK_MONOTONIC, &startInterArrTimer);
+
 		while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
 			if (terminate_load == 1) break;
 
 			struct ibv_wc wc[num_bufs*2];
-			int ne, i;
+			int ne, ii;
 
-			do {
+			//do {
 				ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
 				if (ne < 0) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
@@ -685,16 +779,16 @@ void* client_threadfunc(void* x) {
 					printf("thread_num %d polling \n",thread_num);
 				#endif
 
-			} while (!conn->use_event && ne < 1);
+			//} while (!conn->use_event && ne < 1);
 
-			for (i = 0; i < ne; ++i) {
-				if (wc[i].status != IBV_WC_SUCCESS) {
+			for (ii = 0; ii < ne; ++ii) {
+				if (wc[ii].status != IBV_WC_SUCCESS) {
 					fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-						ibv_wc_status_str(wc[i].status),
-						wc[i].status, (int) wc[i].wr_id);
+						ibv_wc_status_str(wc[ii].status),
+						wc[ii].status, (int) wc[ii].wr_id);
 				}
 
-				int a = (int) wc[i].wr_id;
+				int a = (int) wc[ii].wr_id;
 				switch (a) {
 					case 0 ... num_bufs-1: // SEND_WRID
 						++conn->scnt;
@@ -725,16 +819,19 @@ void* client_threadfunc(void* x) {
 						if (conn->routs != window_size) fprintf(stderr,"Loading thread %d couldn't post receive (%d)\n", thread_num, conn->routs);
 
 						//#if 0
-						if(conn->scnt < conn->iters) {
+						if(conn->scnt < conn->iters && conn->rcnt % WAIT_4_N_RESP == 0) {
 							
-							int req_lat = gen_latency(mean, distribution_mode,0);
+							//business logic - fixed
+							my_sleep(30000);
+
+							int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
 							req_lat = req_lat >> 4;
 							#if MEAS_GEN_LAT 
 								printf("lat = %d \n",req_lat); 
 							#endif
 							uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
 							uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-						
+		                    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
 							#if debug 
 								printf("lower %d; upper %d\n", lat_lower, lat_upper);
 							#endif
@@ -744,7 +841,7 @@ void* client_threadfunc(void* x) {
 							
 							int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
 							if (success == EINVAL) printf("Invalid value provided in wr \n");
-							else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+							else if (success == ENOMEM)	printf("5. Send Queue is full or not enough resources to complete this operation \n");
 							else if (success == EFAULT) printf("Invalid value provided in qp \n");
 							else if (success != 0) {
 								printf("success = %d, \n",success);
@@ -775,13 +872,73 @@ void* client_threadfunc(void* x) {
 
 					default:
 						fprintf(stderr, "Completion for unknown wr_id %d\n",
-							(int) wc[i].wr_id);
+							(int) wc[ii].wr_id);
 				}
 		
 				#if debug 
 					printf("Thread %d rcnt = %d , scnt = %d \n",thread_num, conn->rcnt,conn->scnt);
 				#endif
 			}
+			
+			clock_gettime(CLOCK_MONOTONIC, &checkInterArrTimer);
+            elapedInterArrTime = (checkInterArrTimer.tv_sec-startInterArrTimer.tv_sec)/1e-9 +(checkInterArrTimer.tv_nsec-startInterArrTimer.tv_nsec);
+			
+            if(elapedInterArrTime >= 2000000 && i < window_size) { ///(WAIT_4_N_RESP)) {
+				//printf("InterArrTime = %f, adding request, i = %d \n", elapedInterArrTime, i);
+				int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
+				req_lat = req_lat >> 4;
+				#if MEAS_GEN_LAT 
+					printf("lat = %d \n",req_lat); 
+				#endif
+				uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
+				uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
+				//printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
+				#if debug 
+					printf("lower %d; upper %d\n", lat_lower, lat_upper);
+				#endif
+
+				conn->buf_send[i][1] = lat_lower;
+				conn->buf_send[i][0] = lat_upper;
+				
+				//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
+				//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
+				//conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
+
+				int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, i);
+				if (success == EINVAL) printf("Invalid value provided in wr \n");
+				else if (success == ENOMEM)	printf("4. Send Queue is full or not enough resources to complete this operation 1 \n");
+				else if (success == EFAULT) printf("Invalid value provided in qp \n");
+				else if (success != 0) {
+					printf("success = %d, \n",success);
+					fprintf(stderr, "Couldn't post send 2 \n");
+					//return 1;
+				}
+				else {
+					++conn->souts;
+
+					#if debug 
+						printf("send posted... souts = %d, \n",conn->souts);
+					#endif
+				}
+
+				#if RR
+					offset = ((SERVER_THREADS-1) & (offset+1));
+					//offset++;// = (offset+1)%SERVER_THREADS;
+					//if(offset == SERVER_THREADS) offset = 0;
+					//offset = (offset+1)%SERVER_THREADS;
+					conn->dest_qpn = remote_qp0+offset;
+				#endif	
+
+				#if RANDQP
+					conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
+				#endif
+					
+				//my_sleep(10, thread_num);
+				i++;
+				//if(i == window_size/(WAIT_4_N_RESP)) printf("max window reached \n");
+				clock_gettime(CLOCK_MONOTONIC, &startInterArrTimer);
+			}
+			
 		}
 
 		if (gettimeofday(&end, NULL)) {
@@ -849,7 +1006,7 @@ void* client_threadfunc(void* x) {
 
 			int success = conn->pp_post_send(conn->ctx, conn->dest_qpn /*conn->rem_dest->qpn*/, conn->size, i);
 			if (success == EINVAL) printf("Invalid value provided in wr \n");
-			else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+			else if (success == ENOMEM)	printf("6. Send Queue is full or not enough resources to complete this operation \n");
 			else if (success == EFAULT) printf("Invalid value provided in qp \n");
 			else if (success != 0) {
 				printf("success = %d, \n",success);

@@ -25,9 +25,8 @@
 #define debug 0
 #define DRAIN_SERVER 0
 #define MEAS_TIME_ON_SERVER 0
-#define ENABLE_HT 0
+#define ENABLE_HT 1
 #define ENABLE_SERV_TIME 1
-#define WAIT_4_N_RESP 1
 
 
 uint32_t * all_rcnts;
@@ -174,22 +173,22 @@ void* server_threadfunc(void* x) {
 				++conn->rcnt;
 				--conn->routs;
 
-				//#if debug
+				#if debug
 					if(conn->rcnt % 10000000 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
-				//#endif
+				#endif
 
 				#if debug
 					printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
 				#endif
 				
 				#if ENABLE_SERV_TIME
-				    uint8_t sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
-				    uint8_t sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
+				    uint sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
+				    uint sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
 				    //if (sleep_int_upper<0) sleep_int_upper+= 256;
 				    //if (sleep_int_lower<0) sleep_int_lower+= 256;	
 				    unsigned int sleep_time = (sleep_int_lower + sleep_int_upper * 0x100) << 4;
 				    //unsigned int sleep_time = (sleep_int_lower + ((sleep_int_upper << 8) & 0x100)) << 4;
-				    //if(sleep_time > 10000) printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n",sleep_int_lower, sleep_int_upper, sleep_time);
+				    //printf("sleep_time = %lu \n",sleep_time);
 				    my_sleep(sleep_time, thread_num);
 				    
 				    /*
@@ -197,40 +196,39 @@ void* server_threadfunc(void* x) {
 				    conn->buf_send[a-num_bufs][0] = sleep_int_upper;
 				    */
 				    //if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
-					for(int q = 0; q <= 2; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+				    for(int q = 0; q <= 2; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
 				#endif
 
 				conn->routs += !(conn->pp_post_recv(conn->ctx, a));
-				//if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
+				if (conn->routs != num_bufs ) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
 
-				for(uint64_t send_buf_id = WAIT_4_N_RESP*(a-num_bufs); send_buf_id < WAIT_4_N_RESP*(a-num_bufs)+WAIT_4_N_RESP; send_buf_id++) {
-
-					int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , send_buf_id /*a-num_bufs*/);
-					//printf("src qp = %d \n",wc[i].src_qp);
-					if (success == EINVAL) printf("Invalid value provided in wr \n");
-					else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-					else if (success == EFAULT) printf("Invalid value provided in qp \n");
-					else if (success != 0) {
-						printf("success = %d, \n",success);
-						fprintf(stderr, "Couldn't post send 2 \n");
-					}
-					else {
-						++conn->souts;
-						#if debug 
-							printf("send posted... souts = %d, \n",conn->souts);
-						#endif
-					}
-					#if MEAS_TIME_ON_SERVER
-						clock_gettime(CLOCK_MONOTONIC, &requestEnd);
-						//if(conn->rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-						sum = sum + ((requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-						if(conn->rcnt % 10000000 == 0) {
-							printf("sum = %f, avg latency = %f ns \n",sum, sum/10000000);
-							sum = 0;
-						}
-						//}
+				
+				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
+				//printf("src qp = %d \n",wc[i].src_qp);
+				if (success == EINVAL) printf("Invalid value provided in wr \n");
+				else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
+				else if (success == EFAULT) printf("Invalid value provided in qp \n");
+				else if (success != 0) {
+					printf("success = %d, \n",success);
+					fprintf(stderr, "Couldn't post send 2 \n");
+				}
+				else {
+					++conn->souts;
+					#if debug 
+						printf("send posted... souts = %d, \n",conn->souts);
 					#endif
 				}
+				#if MEAS_TIME_ON_SERVER
+					clock_gettime(CLOCK_MONOTONIC, &requestEnd);
+                    //if(conn->rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+                    sum = sum + ((requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+				    if(conn->rcnt % 10000000 == 0) {
+                        printf("sum = %f, avg latency = %f ns \n",sum, sum/10000000);
+                        sum = 0;
+                    }
+                    //}
+				#endif
+
 				break;
 			}
 		}

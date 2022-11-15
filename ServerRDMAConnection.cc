@@ -12,8 +12,6 @@
 #include <string>
 
 #include "ServerRDMAConnection.h"
-#define WAIT_4_N_RESP 2
-
 
 #ifdef __linux__
 #include <malloc.h>
@@ -466,7 +464,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 		//goto out;
 	}
 
-	for(int r = 0; r < recv_bufs_num/WAIT_4_N_RESP; r++) {
+	for(int r = 0; r < recv_bufs_num; r++) {
 		if(!pp_post_recv(ctx, r+recv_bufs_num)) routs++;
 	}
 
