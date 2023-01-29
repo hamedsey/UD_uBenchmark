@@ -30,8 +30,8 @@
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 0 				//enables round robin request distribution per thread
-#define RANDQP 1				//enables random request distribution per thread
+#define RR 1 				//enables round robin request distribution per thread
+#define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 1
@@ -200,7 +200,7 @@ int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
 }
 
 
-uint8_t genRandDestQP(uint8_t thread_num) {          
+uint16_t genRandDestQP(uint8_t thread_num) {          
 
 	#if MEAS_RAND_NUM_GEN_LAT
 		struct timespec randStart, randEnd;
@@ -250,7 +250,7 @@ uint8_t genRandDestQP(uint8_t thread_num) {
 	
 	static __uint64_t g_lehmer32_state = 0x60bee2bee120fc15;
 	g_lehmer32_state *= 0xe4dd58b5;
-	uint8_t ret = (g_lehmer32_state >> (32-2*thread_num)) % SERVER_THREADS;
+	uint16_t ret = (g_lehmer32_state >> (32-2*thread_num)) % SERVER_THREADS;
 	
 
 	//(4)
@@ -307,7 +307,7 @@ void* client_threadfunc(void* x) {
 	conn->dest_qpn = remote_qp0+offset;
 
 	struct timeval start, end;
-	int mean = 2000;
+	int mean = 1000;
 
     printf("T%d - remote_qp0 = 0x%06x , %d,       dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
 
@@ -339,9 +339,11 @@ void* client_threadfunc(void* x) {
             //send one pkt with 0xFFFF as a test
 			conn->buf_send[i][1] = 255;//lat_lower;
 			conn->buf_send[i][0] = 255;//lat_upper;
+			conn->buf_send[i][2] = 255;
+            conn->buf_send[i][3] = 255;
 
 			//0 signals BF pkt came from client, 1 indicates to BF pkt came from server
-			conn->buf_send[i][2] = 1;
+			//conn->buf_send[i][2] = 1;
 
 			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
 			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
@@ -443,6 +445,8 @@ void* client_threadfunc(void* x) {
 
 								conn->buf_send[a-num_bufs][1] = lat_lower;
 								conn->buf_send[a-num_bufs][0] = lat_upper;
+								conn->buf_send[a-num_bufs][2] = 255;
+            					conn->buf_send[a-num_bufs][3] = 255;
 
 								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
 								if (success == EINVAL) printf("Invalid value provided in wr \n");
@@ -573,6 +577,8 @@ void* client_threadfunc(void* x) {
 
 								conn->buf_send[a-num_bufs][1] = lat_lower;
 								conn->buf_send[a-num_bufs][0] = lat_upper;
+								conn->buf_send[a-num_bufs][2] = 255;
+            					conn->buf_send[a-num_bufs][3] = 255;
 
 								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
 								if (success == EINVAL) printf("Invalid value provided in wr \n");
@@ -713,6 +719,8 @@ void* client_threadfunc(void* x) {
 
 			conn->buf_send[i][1] = lat_lower;
 			conn->buf_send[i][0] = lat_upper;
+			conn->buf_send[i][2] = 255;
+			conn->buf_send[i][3] = 255;
 			
 			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
 			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
@@ -827,6 +835,8 @@ void* client_threadfunc(void* x) {
 
 							conn->buf_send[a-num_bufs][1] = lat_lower;
 							conn->buf_send[a-num_bufs][0] = lat_upper;
+							conn->buf_send[a-num_bufs][2] = 255;
+							conn->buf_send[a-num_bufs][3] = 255;
 							
 							int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
 							if (success == EINVAL) printf("Invalid value provided in wr \n");
@@ -848,6 +858,7 @@ void* client_threadfunc(void* x) {
 								//offset++;// = (offset+1)%SERVER_THREADS;
 								//if(offset == SERVER_THREADS) offset = 0;
 								//offset = (offset+1)%SERVER_THREADS;
+								//printf("offset = %lu \n",offset);
 								conn->dest_qpn = remote_qp0+offset;
 							#endif	
 
@@ -909,7 +920,7 @@ void* client_threadfunc(void* x) {
 		}
 		//printf("avgRPS = %f \n",totalRPS/active_thread_num-1);
 		printf("total RPS = %d, total rcnt = %d, total scnt = %d \n", (int)totalRPS,(int)total_rcnt,(int)total_scnt) ;
-		sleep(10);
+		//sleep(10);
 		char* output_name;
     	asprintf(&output_name, "%s/%d_%d_%d.result", output_dir, window_size, active_thread_num, (int)totalRPS);
 		FILE *f = fopen(output_name, "wb");

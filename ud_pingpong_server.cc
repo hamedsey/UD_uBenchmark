@@ -27,15 +27,33 @@
 #define MEAS_TIME_ON_SERVER 0
 #define ENABLE_HT 0
 #define ENABLE_SERV_TIME 1
-
+#define RR 1
+#define COUNT_IDLE_POLLS 0
+#define MEAS_POLL_LAT 0
+#define MEAS_POLL_LAT_INT 100000
+#define MEAS_POLL_LAT_WARMUP 10001
 
 uint32_t * all_rcnts;
 uint32_t * all_scnts;
+
+#if COUNT_IDLE_POLLS
+	uint64_t * idlePolls;
+	//uint64_t * idlePollMSBs;
+	uint64_t * totalPolls;
+	//uint64_t * totalPollMSBs;
+#endif
+
+#if MEAS_POLL_LAT
+	uint64_t * sumPollTime;
+	uint64_t * totalPolls;
+#endif
+
 
 char* servername;
 char *ib_devname_in;
 int gidx_in;
 int NUM_THREADS = 4;
+int NUM_QUEUES = 55;
 
 
 
@@ -57,7 +75,8 @@ inline void my_sleep(uint n, int thread_num) {
 }
 
 struct thread_data{
-	RDMAConnection *conn;
+	//RDMAConnection *conn;
+	vector<RDMAConnection *> *conn;
 	int id;
 };
 
@@ -85,11 +104,16 @@ static void usage(const char *argv0)
 void* server_threadfunc(void* x) {
 
 	struct thread_data *tdata = (struct thread_data*) x;
-	RDMAConnection *conn = tdata->conn;
-	conn = new RDMAConnection(tdata->id, ib_devname_in, gidx_in ,servername);
-
+	//RDMAConnection *conn = tdata->conn;
+	vector<RDMAConnection *> connections = *(tdata->conn);
 	int thread_num = tdata->id;
-	
+
+	int offset = thread_num%NUM_QUEUES;
+	RDMAConnection *conn = connections[offset];
+
+	//conn = new RDMAConnection(tdata->id, ib_devname_in, gidx_in ,servername);
+
+
 	cpu_set_t cpuset;
     CPU_ZERO(&cpuset);       //clears the cpuset
 
@@ -113,8 +137,26 @@ void* server_threadfunc(void* x) {
 		struct timespec requestStart, requestEnd;
         float sum = 0;
 	#endif
+
+	unsigned int rcnt, scnt = 0;
+	bool receivedFirstOne = false;
+
+	#if MEAS_POLL_LAT
+		struct timespec beginPoll,endPoll;
+		//double sumPollTime = 0.0;
+		bool printedPoll = true;
+		double pollTime = 0.0;
+	#endif
+
 	while (1) {
-		struct ibv_wc wc[num_bufs*2];
+		#if RR
+			offset = ((NUM_QUEUES-1) & (offset+1));		
+			conn = connections[offset];
+		#endif
+
+		struct ibv_wc wc[1];
+		//struct ibv_wc wc[num_bufs*2];
+		
 		int ne, i;
 
 		#if DRAIN_SERVER
@@ -135,13 +177,55 @@ void* server_threadfunc(void* x) {
 
 			if(empty_cnt >= 1000000000) break;
 		#else
-			do {
-				ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs , wc);				
+			//do {
+				//ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs , wc);
+				#if MEAS_POLL_LAT
+					clock_gettime(CLOCK_MONOTONIC,&beginPoll);
+				#endif
+
+				ne = ibv_poll_cq(conn->ctx->cq, 1 , wc);
+
+				#if MEAS_POLL_LAT
+					clock_gettime(CLOCK_MONOTONIC,&endPoll);	
+					if(rcnt >= MEAS_POLL_LAT_WARMUP) {
+						pollTime = (endPoll.tv_sec-beginPoll.tv_sec )/1e-9 + (endPoll.tv_nsec-beginPoll.tv_nsec);
+						sumPollTime[thread_num] += pollTime;
+						totalPolls[thread_num]++;
+						/*
+						if(rcnt % MEAS_POLL_LAT_INT == 0 && printedPoll == false) {
+							printf("T%d : sumPollTime = %f, avgPollTime = %f ns \n",thread_num,sumPollTime[thread_num], sumPollTime[thread_num]/MEAS_POLL_LAT_INT);
+							sumPollTime = 0;
+							printedPoll = true;
+						}
+						*/
+					}
+				#endif	
+
 				if (ne < 0) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
 				}
 
-			} while (!conn->use_event && ne < 1);
+				//if(totalPolls[thread_num] ==  0xFFFFFFFFFFFFFFFF) totalPollMSBs[thread_num]++;
+				//else 
+				#if COUNT_IDLE_POLLS
+					if(receivedFirstOne == false) {
+						if(ne > 0) {
+							receivedFirstOne = true;	
+						}
+					}
+					else {
+						totalPolls[thread_num]++;
+
+						if(ne == 0) {
+							//if(idlePolls[thread_num] == 0xFFFFFFFFFFFFFFFF) idlePollMSBs[thread_num]++;
+							//else 
+							idlePolls[thread_num]++;
+						}
+					}
+
+				#endif
+
+			//} while (!conn->use_event && ne < 1);
 		#endif
 
 
@@ -157,11 +241,11 @@ void* server_threadfunc(void* x) {
 			switch (a) {
 			case 0 ... num_bufs-1:
 
-				++conn->scnt;
+				++scnt;
 				--conn->souts;
 
 				#if debug
-					printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+					printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
 				#endif
 
 				break;
@@ -170,20 +254,28 @@ void* server_threadfunc(void* x) {
 					clock_gettime(CLOCK_MONOTONIC, &requestStart);
 				#endif
 
-				++conn->rcnt;
+				#if MEAS_POLL_LAT
+					printedPoll = false;
+				#endif
+
+				++rcnt;
 				--conn->routs;
 
 				#if debug
-					if(conn->rcnt % 10000000 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
+					if(rcnt % 10000000 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,rcnt,scnt);
 				#endif
 
 				#if debug
-					printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+					printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
 				#endif
 				
+				uint8_t sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
+				uint8_t sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
+
+				uint8_t checkByte2 = (uint)conn->buf_recv[a-num_bufs][42];	
+				uint8_t checkByte3 = (uint)conn->buf_recv[a-num_bufs][43];	
+
 				#if ENABLE_SERV_TIME
-				    uint8_t sleep_int_lower = (uint)conn->buf_recv[a-num_bufs][41];
-				    uint8_t sleep_int_upper = (uint)conn->buf_recv[a-num_bufs][40];	
 				    //if (sleep_int_upper<0) sleep_int_upper+= 256;
 				    //if (sleep_int_lower<0) sleep_int_lower+= 256;	
 				    unsigned int sleep_time = (sleep_int_lower + sleep_int_upper * 0x100) << 4;
@@ -196,11 +288,39 @@ void* server_threadfunc(void* x) {
 				    conn->buf_send[a-num_bufs][0] = sleep_int_upper;
 				    */
 				    //if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
-					for(int q = 0; q <= 2; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+					for(int q = 0; q <= 10; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+				#endif
+
+				#if COUNT_IDLE_POLLS
+					if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
+						printf("printing idle polls of all threads \n");
+						double avgIdlePolls = 0.0;
+						for(unsigned int i = 0; i < NUM_THREADS; i++) {
+							printf("idle polls  = %llu \n", idlePolls[i]);
+							printf("total polls = %llu \n", totalPolls[i]);
+							printf("%f, \n ", float(idlePolls[i])/float(totalPolls[i]));
+							printf("\n");
+							avgIdlePolls += float(idlePolls[i])/float(totalPolls[i]);
+						}
+						printf("\n \n");
+						printf("avg = %f, \n ", float(avgIdlePolls)/NUM_THREADS);
+					}
+				#endif
+
+				#if MEAS_POLL_LAT
+					if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
+						printf("avg polls time of all threads \n");
+						double sumAllPollTimes = 0.0;
+						for(unsigned int i = 0; i < NUM_THREADS; i++) {
+							sumAllPollTimes += float(sumPollTime[i])/float(totalPolls[i]);
+						}
+						printf("\n \n");
+						printf("avg = %f, \n ", float(sumAllPollTimes)/NUM_THREADS);
+					}
 				#endif
 
 				conn->routs += !(conn->pp_post_recv(conn->ctx, a));
-				if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
+				//if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
 
 				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
 				//printf("src qp = %d \n",wc[i].src_qp);
@@ -219,9 +339,9 @@ void* server_threadfunc(void* x) {
 				}
 				#if MEAS_TIME_ON_SERVER
 					clock_gettime(CLOCK_MONOTONIC, &requestEnd);
-					//if(conn->rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
+					//if(rcnt > 200000000) printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
 					sum = sum + ((requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-					if(conn->rcnt % 10000000 == 0) {
+					if(rcnt % 10000000 == 0) {
 						printf("sum = %f, avg latency = %f ns \n",sum, sum/10000000);
 						sum = 0;
 					}
@@ -265,35 +385,35 @@ void* server_threadfunc(void* x) {
 			int a = (int) wc[i].wr_id;
 			switch (a) {
 				case 0 ... num_bufs-1: // SEND_WRID
-					++conn->scnt;
+					++scnt;
 					--conn->souts;
 					//#if debug
-						//printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+						//printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
 					//#endif
 					break;
 
 				case num_bufs ... 2*num_bufs-1:
-					++conn->rcnt;
+					++rcnt;
 					--conn->routs;
 					//#if debug
-						//printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+						//printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
 					//#endif
 			}        
 	    }
 	}
 
-	if(conn->rcnt != conn->scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
-	else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
+	if(rcnt != scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, rcnt,scnt,conn->routs,conn->souts);
+	else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, rcnt,scnt,conn->routs,conn->souts);
 	#endif
 
 
 
 
 
-	if (conn->scnt != conn->rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
+	if (scnt != rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
 
-        all_rcnts[thread_num] = conn->rcnt;
-        all_scnts[thread_num] = conn->scnt;
+        all_rcnts[thread_num] = rcnt;
+        all_scnts[thread_num] = scnt;
 
 	if (conn->pp_close_ctx(conn->ctx)) {
 		printf("close ctx returned 1\n");
@@ -324,36 +444,56 @@ int main(int argc, char *argv[])
 	  case 's':
 	  	servername = optarg;
 		break;
+	  case 'q':
+	  	NUM_QUEUES = atoi(optarg);
+		break;
       default:
 	  	printf("Unrecognized command line argument\n");
         return 0;
     }
 
+	//RDMAConnection *conn = new RDMAConnection(0, ib_devname_in, gidx_in ,servername);
+
 	vector<RDMAConnection *> connections;
-	for (int i = 0; i < NUM_THREADS; i++) {
-		RDMAConnection *conn;
-		connections.push_back(conn);
+	for (uint i = 0; i < NUM_QUEUES; i++) {
+		if(i > 500) { printf("i = %lu \n",i); sleep(1);}
+		//RDMAConnection *conn;
+		connections.push_back(new RDMAConnection(i, ib_devname_in, gidx_in ,servername));
 	}
 
 	all_rcnts = (uint32_t*)malloc(NUM_THREADS*sizeof(uint32_t));
 	all_scnts = (uint32_t*)malloc(NUM_THREADS*sizeof(uint32_t));
 
-  	struct thread_data tdata [connections.size()];
+	#if COUNT_IDLE_POLLS
+		idlePolls = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
+		//idlePollMSBs = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
+		totalPolls = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
+		//totalPollMSBs = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
+	#endif
+
+	#if MEAS_POLL_LAT
+		sumPollTime = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
+		totalPolls = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
+	#endif
+
+  	struct thread_data tdata [NUM_THREADS];
 	pthread_t pt[NUM_THREADS];
 	for(int i = 0; i < NUM_THREADS; i++){
-		tdata[i].conn = connections[i];  
+		tdata[i].conn = &connections;  
 		tdata[i].id = i;
 		int ret = pthread_create(&pt[i], NULL, server_threadfunc, &tdata[i]);
 		assert(ret == 0);
-		if(i == 0) sleep(4);
+		if(i == 0) sleep(1);
 	}
 
 	for(int i = 0; i < NUM_THREADS; i++){
 		int ret = pthread_join(pt[i], NULL);
 		assert(!ret);
 	}
-        uint32_t total_rcnt = 0;
-        uint32_t total_scnt = 0;
+
+	uint32_t total_rcnt = 0;
+	uint32_t total_scnt = 0;
+
 	for(int i = 0; i < NUM_THREADS; i++){
             total_rcnt += all_rcnts[i];
             total_scnt += all_scnts[i];

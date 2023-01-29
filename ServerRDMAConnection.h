@@ -73,9 +73,8 @@ public:
 	unsigned int             size = 20;
 	unsigned long long int   iters = 10000000;
 	int                      use_event = 0;
-	int                      routs = 0;
-	int			 souts = 0;
-	unsigned int             rcnt, scnt = 0;
+	int 					 routs = 0;
+	int 					 souts = 0;
 	int                      num_cq_events = 0;
 	int                      sl = 0;
 	char			 		 gid[33];	

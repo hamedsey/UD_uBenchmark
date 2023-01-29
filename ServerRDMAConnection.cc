@@ -408,8 +408,10 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 
 	int b;
 	for (b = 0; dev_list[b]; ++b)
-		if (!strcmp(ibv_get_device_name(dev_list[b]), ib_devname))
+		if (!strcmp(ibv_get_device_name(dev_list[b]), ib_devname)) {
+			printf("breaking! \n");
 			break;
+		}
 	ib_dev = dev_list[b];
 	if (!ib_dev) {
 		fprintf(stderr, "IB device %s not found\n", ib_devname);
