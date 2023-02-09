@@ -30,12 +30,13 @@
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 1 				//enables round robin request distribution per thread
+#define RR 1				//enables round robin request distribution per thread
 #define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 1
 #define SERVICE_TIME_SIZE 0x8000
+#define SEND_SERVICE_TIME 250
 
 enum {
 	FIXED = 0,
@@ -45,9 +46,53 @@ enum {
     BIMODAL = 4,
 };
 
+/*
+#include <memory>
+#include <atomic>
+template<typename T>
+class lock_free_queue
+{
+private:
+    struct node
+    {
+        std::shared_ptr<T> data;
+        std::atomic<node*> next;
+        node(T const& data_):
+            data(std::make_shared<T>(data_))
+        {}
+    };
+    std::atomic<node*> head;
+    std::atomic<node*> tail;
+public:
+    void push(T const& data)
+    {
+        std::atomic<node*> const new_node=new node(data);
+        node* old_tail = tail.load();
+        while(!old_tail->next.compare_exchange_weak(nullptr, new_node)){
+          node* old_tail = tail.load();
+        }
+        tail.compare_exchange_weak(old_tail, new_node);
+    }
+    std::shared_ptr<T> pop()
+    {
+        node* old_head=head.load();
+        while(old_head &&
+            !head.compare_exchange_weak(old_head,old_head->next)){
+            old_head=head.load();
+        }
+        return old_head ? old_head->data : std::shared_ptr<T>();
+    }
+};
+*/
+
+
 pthread_barrier_t barrier; 
 pthread_barrierattr_t attr;
 int ret; 
+
+pthread_barrier_t barrier2; 
+pthread_barrierattr_t attr2;
+int ret2; 
 
 int remote_qp0;
 int distribution_mode = EXPONENTIAL;
@@ -59,8 +104,17 @@ char *ib_devname_in;
 int gidx_in;
 int remote_qp0_in;
 char* servername;
-int terminate_load = 0;
+bool terminate_load = false;
 int SERVER_THREADS = 8;
+uint64_t goalLoad = 0;
+uint16_t mean = 1000;
+
+//#include "readerwriterqueue.h"
+//#include "atomicops.h"
+
+//using namespace moodycamel;
+
+//ReaderWriterQueue<uint64_t> q;       // Reserve space for at least 100 elements up front
 
 
 //for bimodal service time distribution
@@ -105,24 +159,23 @@ static void usage(const char *argv0)
 */
 
 
-/*
-inline void my_sleep(uint n, int thread_num) {
+inline void my_sleep(uint64_t n) {
 	//if(thread_num ==0) printf("mysleep = %d \n",n);
 	struct timespec ttime,curtime;
 	clock_gettime(CLOCK_MONOTONIC,&ttime);
 	
 	while(1){
 		clock_gettime(CLOCK_MONOTONIC,&curtime);
-		double elapsed = (curtime.tv_sec-ttime.tv_sec )/1e-9 + (curtime.tv_nsec-ttime.tv_nsec);
+		uint64_t elapsed = (curtime.tv_sec-ttime.tv_sec )/1e-9 + (curtime.tv_nsec-ttime.tv_nsec);
 
 		if (elapsed >= n) {
+			//printf("elapsed = %d \n",elapsed);
 			break;
 		}
 	}
 
 	return;
 }
-*/
 
 
 double rand_gen() {
@@ -130,13 +183,13 @@ double rand_gen() {
    return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. );
 }
 
-int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
+uint64_t gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
     
 	if(isMeasThread == 1) return mean;
 	//else if (mode == FIXED) return mean;
 	else {
 		static uint16_t index = 0;
-		int result = serviceTime[index];
+		uint64_t result = serviceTime[index];
 		//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
 		if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
 			//printf("worked!, index = %lu \n",index);
@@ -197,6 +250,22 @@ int gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
 		return mean;
 	}
 	*/
+}
+
+uint64_t gen_arrival_time(uint64_t *arrivalSleepTime) {
+    
+	static uint16_t index = 0;
+	uint64_t result = arrivalSleepTime[index];
+	//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
+	if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
+		//printf("worked!, index = %lu \n",index);
+		index = 0;
+	}
+	else {
+		//printf("index = %lu \n",index);
+		index++;
+	}
+	return result;
 }
 
 
@@ -273,29 +342,207 @@ uint16_t genRandDestQP(uint8_t thread_num) {
 	return ret;
 }
 
+void* client_send(void* x) {
+
+	//struct thread_data *tdata = (struct thread_data*) x;
+	int thread_num = ((struct thread_data*) x)->id;
+
+	//printf("thread id = %d \n", thread_num);
+	cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);       //clears the cpuset
+    CPU_SET(thread_num+24, &cpuset);  //set CPU 2 on cpuset
+	sched_setaffinity(0, sizeof(cpuset), &cpuset);
+
+	RDMAConnection *conn = ((struct thread_data*) x)->conn;
+
+	uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+
+	if(distribution_mode == FIXED) for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = mean;
+	else if(distribution_mode == EXPONENTIAL) {
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		std::exponential_distribution<double> exp{1/(double)mean};
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = exp(gen);
+	}
+	else if(distribution_mode == BIMODAL) {
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+			int result = bm(gen);
+			//printf("result = %d \n",result);
+			if (result == 0) serviceTime[i] = mean;
+			else serviceTime[i] = mean*bimodal_ratio;
+		}
+	}
+
+	uint64_t singleThreadWait = 1000000000/goalLoad;
+	uint64_t avg_inter_arr_ns = active_thread_num*singleThreadWait;
+
+	uint64_t *arrivalSleepTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+	std::random_device rd{};
+	std::mt19937 gen{rd()};
+	std::exponential_distribution<double> exp{1/((double)avg_inter_arr_ns-SEND_SERVICE_TIME)};
+	for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+		arrivalSleepTime[i] = exp(gen);
+		//printf("arrivalSleepTime = %llu \n", arrivalSleepTime[i]);
+	}
+
+	if (thread_num == 0) {
+		printf("active thread num = %d \n", active_thread_num);
+		printf("goalLoad = %llu \n", goalLoad);
+		printf("avg_inter_arr_ns = %llu \n", avg_inter_arr_ns);
+	}
+
+	uint16_t i = 0;
+	uint64_t number;
+	uint64_t sentCount = 0;
+
+	int success;
+	//bool stop = false;
+
+	struct timespec ttime,curtime;
+	clock_gettime(CLOCK_MONOTONIC,&ttime);
+	uint64_t arrival_wait_time = 0;
+	uint64_t outs_send = 0;
+
+	while(terminate_load == false)
+	{
+		//for (int i = 0; i < window_size; i++) {
+		//for (int j = 0; j < 10000000; j++) {
+			//int i = j % window_size;
+			
+			uint64_t req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
+			req_lat = req_lat >> 4;
+            #if MEAS_GEN_LAT 
+                printf("lat = %d \n",req_lat); 
+            #endif
+			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
+			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
+		    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
+			#if debug 
+				//printf("lower %d; upper %d\n", lat_lower, lat_upper);
+			#endif
+
+			conn->buf_send[i][1] = lat_lower;
+			conn->buf_send[i][0] = lat_upper;
+			conn->buf_send[i][2] = 255;
+			conn->buf_send[i][3] = 255;
+			
+			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
+			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
+			//conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
+
+			//if(conn->souts - conn->rcnt < window_size) {
+
+				//bool succeeded = q.try_dequeue(number);  // Returns false if the queue was empty
+				//assert(succeeded);
+				//printf("dequeue succeeded = %d \n", succeeded);
+
+				//if(succeeded == false) {
+					//printf("went with i \n");
+					//if(stop == false) 
+
+				clock_gettime(CLOCK_MONOTONIC,&curtime);
+				uint64_t elapsed = (curtime.tv_sec-ttime.tv_sec )/1e-9 + (curtime.tv_nsec-ttime.tv_nsec);
+				//if (elapsed + SEND_SERVICE_TIME < arrival_wait_time) my_sleep(arrival_wait_time - elapsed - SEND_SERVICE_TIME);
+				if (elapsed < arrival_wait_time) my_sleep(arrival_wait_time - elapsed);
+
+
+
+
+
+
+				success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, i);
+				sentCount++;
+
+				//}
+				//else {
+					//printf("dequeued number \n");
+				//	success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, number);
+				//}
+
+				clock_gettime(CLOCK_MONOTONIC,&ttime);
+	
+				
+				if (outs_send < sentCount - conn->rcnt) {
+					outs_send = sentCount - conn->rcnt;
+				}
+
+
+			//printf("elapsed = %d \n",elapsed);
+
+				arrival_wait_time = gen_arrival_time(arrivalSleepTime);
+
+
+				if (success == EINVAL) printf("Invalid value provided in wr \n");
+				else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation 1, souts = %d \n",sentCount - conn->rcnt);
+				else if (success == EFAULT) printf("Invalid value provided in qp \n");
+				else if (success != 0) {
+					printf("success = %d, \n",success);
+					fprintf(stderr, "Couldn't post send 3 \n");
+					//return 1;
+				}
+				else {
+					++conn->souts;
+					//if(succeeded == false && stop == false) {
+						if(i == window_size - 1) {
+							//printf("reached max window size \n");
+							i = 0;
+							//stop = true;
+						}
+						else i++;
+					//}
+					/*
+					if(conn->souts - conn->rcnt < window_size) {
+						printf("exceeded window size. souts - rcnt = %llu \n",conn->souts - conn->rcnt);
+					}
+					*/
+					#if debug 
+						//printf("send posted... souts = %d, \n",conn->souts);
+					#endif
+
+				}
+
+				#if RR
+					conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+					conn->dest_qpn = remote_qp0+conn->offset;
+				#endif	
+
+				#if RANDQP
+					conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
+				#endif
+				
+				//my_sleep(10, thread_num);
+
+				//printf("arrival_wait_time = %lu \n",arrival_wait_time);
+			//}
+		//}
+	}
+	//printf("send sentCount = %llu \n",sentCount);
+	//printf("T%d send thread outstanding sends = %llu \n", thread_num, outs_send);
+
+	//insert barrier to send last pkt after receive threads have drained.
+	//ret2 = pthread_barrier_wait(&barrier2);
+}
 
 void* client_threadfunc(void* x) {
 
 	struct thread_data *tdata = (struct thread_data*) x;
 	int thread_num = tdata->id;
+	//printf("thread id = %llu \n", thread_num);
+
+	if(thread_num == 0) {
+		tdata->conn = new RDMAConnection(thread_num,0,ib_devname_in,gidx_in,remote_qp0_in,servername);
+		remote_qp0 = rem_dest->qpn;
+	}
+	else tdata->conn = new RDMAConnection(thread_num,0,ib_devname_in,gidx_in,remote_qp0_in,servername);
+
+	//printf("after connection = %d \n", thread_num);
 
 	RDMAConnection *conn = tdata->conn;
-	if(thread_num == active_thread_num - 1 && thread_num == 0) {
-		conn = new RDMAConnection(thread_num,1,ib_devname_in,gidx_in,remote_qp0_in,servername);
-		conn->measured_latency = (double *)malloc(sizeof(double)*(conn->sync_iters));
-		remote_qp0 = rem_dest->qpn;
-	}
-	else if(thread_num == active_thread_num - 1) {
-		conn = new RDMAConnection(thread_num,1,ib_devname_in,gidx_in,remote_qp0_in,servername);
-		conn->measured_latency = (double *)malloc(sizeof(double)*(conn->sync_iters));
-	}
-	else if(thread_num == 0) {
-		conn = new RDMAConnection(thread_num,0,ib_devname_in,gidx_in,remote_qp0_in,servername);
-		remote_qp0 = rem_dest->qpn;
-	}
-	else conn = new RDMAConnection(thread_num,0,ib_devname_in,gidx_in,remote_qp0_in,servername);
-	int offset = thread_num%SERVER_THREADS;
-	printf("thread_num = %d, offset = %d, rx_depth = %d \n", thread_num, offset, conn->rx_depth);
+	conn->offset = thread_num%SERVER_THREADS;
+	printf("thread_num = %d, offset = %d, rx_depth = %d \n", thread_num, conn->offset, conn->rx_depth);
 
 	cpu_set_t cpuset;
     CPU_ZERO(&cpuset);       //clears the cpuset
@@ -304,390 +551,23 @@ void* client_threadfunc(void* x) {
 
 	sleep(1);
 	ret = pthread_barrier_wait(&barrier);
-	conn->dest_qpn = remote_qp0+offset;
+	conn->dest_qpn = remote_qp0+conn->offset;
 
 	struct timeval start, end;
-	int mean = 1000;
 
-    printf("T%d - remote_qp0 = 0x%06x , %d,       dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
-
-	if(thread_num == active_thread_num - 1) {
-        uint64_t *serviceTime;
-		struct timespec requestStart, requestEnd;
-		const int num_bufs = conn->sync_bufs_num;
-	
-		for (unsigned int r = 0; r < num_bufs; ++r) {
-			if(!conn->pp_post_recv(conn->ctx, r+num_bufs, true)) 
-				++conn->routs;
-		}
-		if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
-			
-		//printf("T%d - remote_qp0 = 0x%06x , %d,       dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
-		for (int i = 0; i < num_bufs; i++) {
-
-			//int req_lat = gen_latency(mean, distribution_mode,1);
-			//req_lat = req_lat >> 4;
-            #if MEAS_GEN_LAT 
-                //printf("lat = %d \n",req_lat); 
-            #endif
-			//uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-			//uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-			#if debug
-				printf("lower %d; upper %d\n", lat_lower, lat_upper);
-			#endif 
-
-            //send one pkt with 0xFFFF as a test
-			conn->buf_send[i][1] = 255;//lat_lower;
-			conn->buf_send[i][0] = 255;//lat_upper;
-			conn->buf_send[i][2] = 255;
-            conn->buf_send[i][3] = 255;
-
-			//0 signals BF pkt came from client, 1 indicates to BF pkt came from server
-			//conn->buf_send[i][2] = 1;
-
-			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
-			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
-			//conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
+    printf("T%d - remote_qp0 = 0x%06x , %d, dest_qpn = 0x%06x , %d \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn);
 
 
-			int success = conn->pp_post_send(conn->ctx, conn->dest_qpn /*conn->rem_dest->qpn*/, conn->size, i);
-			if (success == EINVAL) printf("Invalid value provided in wr \n");
-			else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-			else if (success == EFAULT) printf("Invalid value provided in qp \n");
-			else if (success != 0) {
-				printf("success = %d, \n",success);
-				fprintf(stderr, "Couldn't post send 2 \n");
-			}
-			else {
-				++conn->souts;
-				#if debug
-					printf("send posted... souts = %d, \n",conn->souts);
-				#endif
-			}
+	//spawn send thread
+	//struct thread_data* t_data = tdata;
+	pthread_t pt;
+	//t_data.conn = conn;  
+	//t_data.id = thread_num;
+	int ret = pthread_create(&pt, NULL, client_send, (void *)tdata);
+	assert(ret == 0);
 
-			#if RR
-				offset = ((SERVER_THREADS-1) & (offset+1));// = (offset+1)%SERVER_THREADS;
-				//if(offset == SERVER_THREADS) offset = 0;
-				conn->dest_qpn = remote_qp0+offset;
-			#endif
+	    //ret = pthread_barrier_wait(&barrier);
 
-			#if RANDQP
-				conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-			#endif
-		}
-
-
-        //wait to receive pkt
-		while (conn->rcnt < 1 || conn->scnt < 1) {
-
-				struct ibv_wc wc[num_bufs*2];
-				int ne, i;
-
-				do {
-					ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
-					if (ne < 0) {
-						fprintf(stderr, "poll CQ failed %d\n", ne);
-					}
-					
-					#if debug
-						printf("thread_num %d polling \n",thread_num);
-					#endif
-
-				} while (!conn->use_event && ne < 1);
-
-				for (i = 0; i < ne; ++i) {
-					if (wc[i].status != IBV_WC_SUCCESS) {
-						fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-							ibv_wc_status_str(wc[i].status),
-							wc[i].status, (int) wc[i].wr_id);
-					}
-
-					int a = (int) wc[i].wr_id;
-					switch (a) {
-						case 0 ... num_bufs-1: // SEND_WRID
-							clock_gettime(CLOCK_MONOTONIC, &requestStart);
-							++conn->scnt;
-							--conn->souts;
-
-							#if debug
-								printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-							#endif
-							break;
-
-						case num_bufs ... 2*num_bufs-1:
-							clock_gettime(CLOCK_MONOTONIC, &requestEnd);
-
-                            //printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-							//conn->measured_latency[conn->rcnt] = (requestEnd.tv_sec-requestStart.tv_sec)/1e-6 +(requestEnd.tv_nsec-requestStart.tv_nsec)/1e3;
-
-							++conn->rcnt;
-							--conn->routs;
-							
-							#if debug
-								printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-							#endif
-
-							if(!conn->pp_post_recv(conn->ctx, a,true)) ++conn->routs;
-							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
-
-							if(conn->scnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1, serviceTime);
-								req_lat = req_lat >> 4;
-                                #if MEAS_GEN_LAT 
-                                    printf("lat = %d \n",req_lat); 
-                                #endif
-								uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-								uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-
-								#if debug
-									printf("lower %d; upper %d\n", lat_lower, lat_upper);
-								#endif
-
-								conn->buf_send[a-num_bufs][1] = lat_lower;
-								conn->buf_send[a-num_bufs][0] = lat_upper;
-								conn->buf_send[a-num_bufs][2] = 255;
-            					conn->buf_send[a-num_bufs][3] = 255;
-
-								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
-								if (success == EINVAL) printf("Invalid value provided in wr \n");
-								else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-								else if (success == EFAULT) printf("Invalid value provided in qp \n");
-								else if (success != 0) {
-									printf("success = %d, \n",success);
-									fprintf(stderr, "Couldn't post send 2 \n");
-								}
-								else {
-									++conn->souts;
-									#if debug
-										printf("send posted... souts = %d, \n",conn->souts);
-									#endif
-								}
-
-								#if RR	
-									offset = ((SERVER_THREADS-1) & (offset+1));							
-									//offset++;// = (offset+1)%SERVER_THREADS;
-									//if(offset == SERVER_THREADS) offset = 0;
-									//offset = (offset+1)%SERVER_THREADS;
-									conn->dest_qpn = remote_qp0+offset;
-								#endif		
-
-								#if RANDQP
-									conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-									//printf("dest_qpn = %d \n",conn->dest_qpn);
-								#endif		
-
-							}
-							
-							break;
-
-						default:
-							fprintf(stderr, "Completion for unknown wr_id %d\n",
-								(int) wc[i].wr_id);
-							//return 1;
-					}
-				
-					#if debug 
-						printf("Thread %d rcnt = %d , scnt = %d \n",thread_num, conn->rcnt,conn->scnt);
-					#endif
-				}
-		}
-
-        ////////////////////////////////////////////////////////////////////////////////////////////////////////
-	    ret = pthread_barrier_wait(&barrier);
-		printf("Completed test pkt! \n");
-        sleep(5);
-        printf("Started Measurement Thread \n");
-
-		if (gettimeofday(&start, NULL)) {
-			perror("gettimeofday");
-		}
-									
-		double prev_clock = now();
-		while (conn->rcnt < conn->sync_iters || conn->scnt < conn->sync_iters) {
-
-				struct ibv_wc wc[num_bufs*2];
-				int ne, i;
-
-				do {
-					ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
-					if (ne < 0) {
-						fprintf(stderr, "poll CQ failed %d\n", ne);
-					}
-					
-					#if debug
-						printf("thread_num %d polling \n",thread_num);
-					#endif
-
-				} while (!conn->use_event && ne < 1);
-
-				for (i = 0; i < ne; ++i) {
-					if (wc[i].status != IBV_WC_SUCCESS) {
-						fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-							ibv_wc_status_str(wc[i].status),
-							wc[i].status, (int) wc[i].wr_id);
-					}
-
-					int a = (int) wc[i].wr_id;
-					switch (a) {
-						case 0 ... num_bufs-1: // SEND_WRID
-							clock_gettime(CLOCK_MONOTONIC, &requestStart);
-							++conn->scnt;
-							--conn->souts;
-							#if debug
-								printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-							#endif
-							break;
-
-						case num_bufs ... 2*num_bufs-1:
-							clock_gettime(CLOCK_MONOTONIC, &requestEnd);
-
-                            //printf("latency = %f ns \n",(requestEnd.tv_sec-requestStart.tv_sec)/1e-9 +(requestEnd.tv_nsec-requestStart.tv_nsec));
-							conn->measured_latency[conn->rcnt] = (requestEnd.tv_sec-requestStart.tv_sec)/1e-6 +(requestEnd.tv_nsec-requestStart.tv_nsec)/1e3;
-
-							++conn->rcnt;
-							--conn->routs;
-							
-							#if debug
-								printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-							#endif
-
-                            #if debug
-							    if(conn->rcnt % SYNC_INTERVAL == 0) {
-								    double curr_clock = now();
-								    printf("Meas: T%d - %f rps, rcnt = %d, scnt = %d \n",thread_num,SYNC_INTERVAL/(curr_clock-prev_clock),conn->rcnt,conn->scnt);
-								    prev_clock = curr_clock;
-							    }
-                            #endif
-
-							if(!conn->pp_post_recv(conn->ctx, a,true)) ++conn->routs;
-							if (conn->routs != num_bufs) fprintf(stderr,"Measurement couldn't post receive (%d)\n",conn->routs);
-
-							if(conn->scnt < conn->sync_iters) {
-								int req_lat = gen_latency(mean, distribution_mode,1, serviceTime);
-								req_lat = req_lat >> 4;
-                                #if MEAS_GEN_LAT 
-                                    printf("lat = %d \n",req_lat); 
-                                #endif
-								uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-								uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-
-								#if debug
-									printf("lower %d; upper %d\n", lat_lower, lat_upper);
-								#endif
-
-								conn->buf_send[a-num_bufs][1] = lat_lower;
-								conn->buf_send[a-num_bufs][0] = lat_upper;
-								conn->buf_send[a-num_bufs][2] = 255;
-            					conn->buf_send[a-num_bufs][3] = 255;
-
-								int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, a-num_bufs);
-								if (success == EINVAL) printf("Invalid value provided in wr \n");
-								else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-								else if (success == EFAULT) printf("Invalid value provided in qp \n");
-								else if (success != 0) {
-									printf("success = %d, \n",success);
-									fprintf(stderr, "Couldn't post send 2 \n");
-								}
-								else {
-									++conn->souts;
-									#if debug
-										printf("send posted... souts = %d, \n",conn->souts);
-									#endif
-								}
-
-								#if RR
-									offset = ((SERVER_THREADS-1) & (offset+1));
-									//offset++;// = (offset+1)%SERVER_THREADS;
-									//if(offset == SERVER_THREADS) offset = 0;
-									//offset = (offset+1)%SERVER_THREADS;
-									conn->dest_qpn = remote_qp0+offset;
-								#endif		
-
-								#if RANDQP
-									conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-									//printf("dest_qpn = %d \n",conn->dest_qpn);
-								#endif		
-
-							}
-							
-							break;
-
-						default:
-							fprintf(stderr, "Completion for unknown wr_id %d\n",
-								(int) wc[i].wr_id);
-							//return 1;
-					}
-				
-					#if debug 
-						printf("Thread %d rcnt = %d , scnt = %d \n",thread_num, conn->rcnt,conn->scnt);
-					#endif
-				}
-		}
-
-		if (gettimeofday(&end, NULL)) {
-			perror("gettimeofday");
-		}
-
-
-	}
-	else if (thread_num < active_thread_num - 1){
-		/*
-		std::random_device rd{};
-		std::mt19937 gen{rd()};
-		std::exponential_distribution<double> exp;
-		std::discrete_distribution<> bm;
-
-		if(distribution_mode == FIXED) ;
-		else if (distribution_mode == EXPONENTIAL) std::exponential_distribution<double> exp{1/(double)mean};
-		else if (distribution_mode == BIMODAL) std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
-		else { 
-			perror("Invalid service time distribution \n");
-			exit(1);
-		}
-		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
-        for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) 
-			if(distribution_mode == FIXED) serviceTime[i] = mean;
-			else if(distribution_mode == EXPONENTIAL) serviceTime[i] = exp(gen);
-			else {
-				int result = bm(gen);
-				printf("result = %d \n",result);
-				if (result == 0) serviceTime[i] = mean;
-				else serviceTime[i] = mean*bimodal_ratio;
-			}
-        if(thread_num < 3) {
-            for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
-            printf("\n");
-        }
-		*/
-
-		uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
-
-		if(distribution_mode == FIXED) for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = mean;
-		else if(distribution_mode == EXPONENTIAL) {
-			std::random_device rd{};
-			std::mt19937 gen{rd()};
-			std::exponential_distribution<double> exp{1/(double)mean};
-			for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = exp(gen);
-		}
-		else if(distribution_mode == BIMODAL) {
-			std::random_device rd{};
-			std::mt19937 gen{rd()};
-			std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
-			for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
-				int result = bm(gen);
-				//printf("result = %d \n",result);
-				if (result == 0) serviceTime[i] = mean;
-				else serviceTime[i] = mean*bimodal_ratio;
-			}
-		}
-
-		/*
-        if(thread_num < 3) {
-            for(uint64_t i = 0; i < 10; i++) printf("%lu,  ",serviceTime[i]);
-            printf("\n");
-        }
-		*/
-	    ret = pthread_barrier_wait(&barrier);
         //sleep(1);
         //printf("T%d started \n",thread_num);
         //if(thread_num != 5) sleep(10);
@@ -703,83 +583,32 @@ void* client_threadfunc(void* x) {
 			printf("T%d - remote_qp0 = %d \n",thread_num,remote_qp0);
 		#endif
 
-		for (int i = 0; i < window_size; i++) {
 
-			int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
-			req_lat = req_lat >> 4;
-            #if MEAS_GEN_LAT 
-                printf("lat = %d \n",req_lat); 
-            #endif
-			uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-			uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;f
-		    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
-			#if debug 
-				printf("lower %d; upper %d\n", lat_lower, lat_upper);
-			#endif
-
-			conn->buf_send[i][1] = lat_lower;
-			conn->buf_send[i][0] = lat_upper;
-			conn->buf_send[i][2] = 255;
-			conn->buf_send[i][3] = 255;
-			
-			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
-			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
-			//conn->buf_send[i][5] = (conn->ctx->qp->qp_num & 0x0000FF);
-
-			int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, i);
-			if (success == EINVAL) printf("Invalid value provided in wr \n");
-			else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation 1 \n");
-			else if (success == EFAULT) printf("Invalid value provided in qp \n");
-			else if (success != 0) {
-				printf("success = %d, \n",success);
-				fprintf(stderr, "Couldn't post send 2 \n");
-				//return 1;
-			}
-			else {
-				++conn->souts;
-
-				#if debug 
-					printf("send posted... souts = %d, \n",conn->souts);
-				#endif
-			}
-
-			#if RR
-				offset = ((SERVER_THREADS-1) & (offset+1));
-				//offset++;// = (offset+1)%SERVER_THREADS;
-				//if(offset == SERVER_THREADS) offset = 0;
-				//offset = (offset+1)%SERVER_THREADS;
-				conn->dest_qpn = remote_qp0+offset;
-			#endif	
-
-			#if RANDQP
-				conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-			#endif
-				
-            //my_sleep(10, thread_num);
-		}
-
+		bool succeeded;
 		if (gettimeofday(&start, NULL)) {
 			perror("gettimeofday");
 		}								
 		
 		double prev_clock = now();
-		while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
-			if (terminate_load == 1) break;
+		//while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
+		uint64_t outs_send = 0;
+		while(terminate_load == false) {
+			//if (terminate_load == true) break;
 
 			struct ibv_wc wc[num_bufs*2];
 			int ne, i;
 
-			do {
+			//do {
 				ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
 				if (ne < 0) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
 				}
 
 				#if debug 
-					printf("thread_num %d polling \n",thread_num);
+					//printf("thread_num %d polling \n",thread_num);
 				#endif
 
-			} while (!conn->use_event && ne < 1);
+			//} while (!conn->use_event && ne < 1);
 
 			for (i = 0; i < ne; ++i) {
 				if (wc[i].status != IBV_WC_SUCCESS) {
@@ -788,11 +617,16 @@ void* client_threadfunc(void* x) {
 						wc[i].status, (int) wc[i].wr_id);
 				}
 
-				int a = (int) wc[i].wr_id;
+				uint64_t a = (int) wc[i].wr_id;
 				switch (a) {
 					case 0 ... num_bufs-1: // SEND_WRID
 						++conn->scnt;
-						--conn->souts;
+						
+						if (outs_send < conn->scnt - conn->rcnt) {
+							outs_send = conn->scnt - conn->rcnt;
+						}
+						
+						//--conn->souts;
 						#if debug
 							printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
 						#endif
@@ -801,6 +635,8 @@ void* client_threadfunc(void* x) {
 					case num_bufs ... 2*num_bufs-1:
 						++conn->rcnt;
 						--conn->routs;
+
+						//if(conn->rcnt == 1) printf("Completed test pkt! \n");
 						#if debug
 							printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
 						#endif
@@ -817,57 +653,11 @@ void* client_threadfunc(void* x) {
 
 						if(!conn->pp_post_recv(conn->ctx, a, false)) ++conn->routs;
 						if (conn->routs != window_size) fprintf(stderr,"Loading thread %d couldn't post receive (%d)\n", thread_num, conn->routs);
-
-						//#if 0
-						if(conn->scnt < conn->iters) {
-							
-							int req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
-							req_lat = req_lat >> 4;
-							#if MEAS_GEN_LAT 
-								printf("lat = %d \n",req_lat); 
-							#endif
-							uint lat_lower = req_lat & ((1u <<  8) - 1);//req_lat % 0x100;
-							uint lat_upper = (req_lat >> 8) & ((1u <<  8) - 1);//req_lat / 0x100;
-		                    //printf("sleep_int_lower = %lu, sleep_int_upper = %lu, sleep_time = %lu \n", lat_lower, lat_upper, req_lat);
-							#if debug 
-								printf("lower %d; upper %d\n", lat_lower, lat_upper);
-							#endif
-
-							conn->buf_send[a-num_bufs][1] = lat_lower;
-							conn->buf_send[a-num_bufs][0] = lat_upper;
-							conn->buf_send[a-num_bufs][2] = 255;
-							conn->buf_send[a-num_bufs][3] = 255;
-							
-							int success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, a-num_bufs);
-							if (success == EINVAL) printf("Invalid value provided in wr \n");
-							else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
-							else if (success == EFAULT) printf("Invalid value provided in qp \n");
-							else if (success != 0) {
-								printf("success = %d, \n",success);
-								fprintf(stderr, "Couldn't post send 2 \n");
-							}
-							else {
-								++conn->souts;
-								#if debug
-									printf("send posted... souts = %d, \n",conn->souts);
-								#endif
-							}
-							
-							#if RR
-								offset = ((SERVER_THREADS-1) & (offset+1));
-								//offset++;// = (offset+1)%SERVER_THREADS;
-								//if(offset == SERVER_THREADS) offset = 0;
-								//offset = (offset+1)%SERVER_THREADS;
-								//printf("offset = %lu \n",offset);
-								conn->dest_qpn = remote_qp0+offset;
-							#endif	
-
-							#if RANDQP
-								conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
-							#endif
-						}
-						//#endif
 					
+						//q.enqueue(17);                       // Will allocate memory if the queue is full
+						//succeeded = q.try_enqueue(a-num_bufs);  // Will only succeed if the queue has an empty slot (never allocates)
+						//assert(succeeded);
+						//printf("succeeded \n");
 						break;
 
 					default:
@@ -880,71 +670,95 @@ void* client_threadfunc(void* x) {
 				#endif
 			}
 		}
+		printf("T%d recv thread outstanding send =%llu \n", thread_num, outs_send);
 
 		if (gettimeofday(&end, NULL)) {
 			perror("gettimeofday");
 		}
-	} 
+	//} 
 
 	float usec = (end.tv_sec - start.tv_sec) * 1000000 +(end.tv_usec - start.tv_usec);
+	rps[thread_num] = conn->rcnt/(usec/1000000.);
+	printf("Thread %d: %d iters in %.5f seconds, rps = %f \n", thread_num, conn->rcnt, usec/1000000., rps[thread_num]);
 	//long long bytes = (long long) conn->size * conn->iters * 2;
 
-	if(thread_num == active_thread_num - 1){
-		rps[thread_num] = conn->sync_iters/(usec/1000000.);
-		printf("Meas. Thread: %d iters in %.5f seconds, rps = %f \n", conn->rcnt, usec/1000000., conn->rcnt/(usec/1000000.));
-	}
-	else if (thread_num < active_thread_num - 1) {
-		rps[thread_num] = conn->rcnt/(usec/1000000.);
-		printf("Thread %d: %d iters in %.5f seconds, rps = %f \n", thread_num, conn->rcnt, usec/1000000., rps[thread_num]);
-	}
 
-	// Dump out measurement results from measurement thread
-	if(thread_num == active_thread_num - 1) {
-		terminate_load = 1;
-		printf("Measurement done, terminating loading threads\n");
+
+	#if 1
+	//if (thread_num < active_thread_num - 1){
+        //sleep(10);
+		//const int num_bufs = conn->bufs_num;
+		//printf("num_bufs = %llu \n", num_bufs);
+        for (int u=0; u<10000000; u++) {
+
+            struct ibv_wc wc[num_bufs*2];
+		    int ne, i;
+
+		    ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
+            if (ne < 0) {
+			    fprintf(stderr, "poll CQ failed %d\n", ne);
+		    }
+            for (i = 0; i < ne; ++i) {
+			    if (wc[i].status != IBV_WC_SUCCESS) {
+				    fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+					    ibv_wc_status_str(wc[i].status),
+					    wc[i].status, (int) wc[i].wr_id);
+			    }
+
+			    int a = (int) wc[i].wr_id;
+			    switch (a) {
+				    case 0 ... num_bufs-1: // SEND_WRID
+					    ++conn->scnt;
+					    --conn->souts;
+					    //#if debug
+						    //printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+					    //#endif
+					    break;
+
+				    case num_bufs ... 2*num_bufs-1:
+					    ++conn->rcnt;
+					    --conn->routs;
+					    //#if debug
+						    //printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
+					    //#endif
+						break;
+
+					default:
+						fprintf(stderr, "Completion for unknown wr_id %d\n",(int) wc[i].wr_id);
+                }        
+            }
+        }
         all_rcnts[thread_num] = conn->rcnt;
         all_scnts[thread_num] = conn->scnt;
 	    ret = pthread_barrier_wait(&barrier);
-		//sleep(5);
-		double totalRPS = 0;
-        uint32_t total_rcnt = 0;
-        uint32_t total_scnt = 0;
-		//aggregate RPS
-		for(int i = 0; i < active_thread_num-1; i++){
-    		printf("rps = %d \n",(int)rps[i]);
-			totalRPS += rps[i];
-		}
-		for(int i = 0; i < active_thread_num; i++){
-            total_rcnt += all_rcnts[i];
-            total_scnt += all_scnts[i];
-		}
-		//printf("avgRPS = %f \n",totalRPS/active_thread_num-1);
-		printf("total RPS = %d, total rcnt = %d, total scnt = %d \n", (int)totalRPS,(int)total_rcnt,(int)total_scnt) ;
-		//sleep(10);
-		char* output_name;
-    	asprintf(&output_name, "%s/%d_%d_%d.result", output_dir, window_size, active_thread_num, (int)totalRPS);
-		FILE *f = fopen(output_name, "wb");
-		for (int i=0; i<conn->sync_iters; i++) {
-			float latency = (float)conn->measured_latency[i];
-			fprintf(f, "%.5f \n", latency);
-		}
-		fclose(f);
+    //}
 
-    	asprintf(&output_name, "%s/%d_%d_%d_%.0f.time", output_dir, window_size, active_thread_num, (int)totalRPS, usec/1000000);
-		FILE *ftime = fopen(output_name, "wb");
-		float run_time = (float)(usec/1000000);
-		fprintf(ftime, "%.5f \n", run_time);
-		fclose(ftime);
+    if(conn->rcnt != conn->scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
+    else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
+    #endif
 
-		const int num_bufs = conn->sync_bufs_num;
-        for (int i = 0; i < num_bufs; i++) {
-            //send one pkt with 0xFFFF
+	//insert barrier to send last pkt after receive threads have drained.
+	//ret2 = pthread_barrier_wait(&barrier2);
+
+
+	ret = pthread_join(pt, NULL);
+	assert(!ret);
+
+
+
+	//sending final packet to capture ingress and egress pkt count
+	if(thread_num == active_thread_num - 1) {
+		//int num_bufs = conn->sync_bufs_num;
+		for (int i = 0; i < 1; i++) {
+			//send one pkt with 0xFFFF
 			conn->buf_send[i][1] = 0;
 			conn->buf_send[i][0] = 0;
-            conn->buf_send[i][2] = 255;
-            conn->buf_send[i][3] = 255;
+			conn->buf_send[i][2] = 255;
+			conn->buf_send[i][3] = 255;
+			//printf("sending after barrier, dest_qpn = %llu \n", conn->dest_qpn);
 
-			int success = conn->pp_post_send(conn->ctx, conn->dest_qpn /*conn->rem_dest->qpn*/, conn->size, i);
+			int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, i);
+			//printf("sending last pkt \n");
 			if (success == EINVAL) printf("Invalid value provided in wr \n");
 			else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");
 			else if (success == EFAULT) printf("Invalid value provided in qp \n");
@@ -960,17 +774,70 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				offset = ((SERVER_THREADS-1) & (offset+1));
-				//offset++;// = (offset+1)%SERVER_THREADS;
-				//if(offset == SERVER_THREADS) offset = 0;
-				//offset = (offset+1)%SERVER_THREADS;
-				conn->dest_qpn = remote_qp0+offset;
+				conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+				conn->dest_qpn = remote_qp0+conn->offset;
 			#endif
 
 			#if RANDQP
 				conn->dest_qpn = remote_qp0+genRandDestQP(thread_num);
 			#endif
 		}
+		//printf("exited while loop \n");
+	}
+
+	//if(thread_num == active_thread_num - 1){
+	//	rps[thread_num] = conn->sync_iters/(usec/1000000.);
+	//	printf("Meas. Thread: %d iters in %.5f seconds, rps = %f \n", conn->rcnt, usec/1000000., conn->rcnt/(usec/1000000.));
+	//}
+	//else if (thread_num < active_thread_num - 1) {
+
+	//}
+
+	// Dump out measurement results from measurement thread
+	if(thread_num == active_thread_num - 1) {
+		//printf("hello thread %llu \n",thread_num);
+		//terminate_load = true;
+		//printf("Measurement done, terminating loading threads\n");
+        all_rcnts[thread_num] = conn->rcnt;
+        all_scnts[thread_num] = conn->scnt;
+	    //ret = pthread_barrier_wait(&barrier);
+		//printf("hello2\n");
+
+		//sleep(5);
+		double totalRPS = 0;
+        uint32_t total_rcnt = 0;
+        uint32_t total_scnt = 0;
+		//aggregate RPS
+		for(int i = 0; i < active_thread_num; i++){
+    		printf("rps = %d \n",(int)rps[i]);
+			totalRPS += rps[i];
+		}
+		for(int i = 0; i < active_thread_num; i++){
+            total_rcnt += all_rcnts[i];
+            total_scnt += all_scnts[i];
+		}
+		//printf("avgRPS = %f \n",totalRPS/active_thread_num-1);
+		printf("total RPS = %d, total rcnt = %d, total scnt = %d \n", (int)totalRPS,(int)total_rcnt,(int)total_scnt) ;
+		//sleep(10);
+
+		/*
+		char* output_name;
+    	asprintf(&output_name, "%s/%d_%d_%d.result", output_dir, window_size, active_thread_num, (int)totalRPS);
+		FILE *f = fopen(output_name, "wb");
+		for (int i=0; i<conn->sync_iters; i++) {
+			float latency = (float)conn->measured_latency[i];
+			fprintf(f, "%.5f \n", latency);
+		}
+		fclose(f);
+		
+
+    	asprintf(&output_name, "%s/%d_%d_%d_%.0f.time", output_dir, window_size, active_thread_num, (int)totalRPS, usec/1000000);
+		FILE *ftime = fopen(output_name, "wb");
+		float run_time = (float)(usec/1000000);
+		fprintf(ftime, "%.5f \n", run_time);
+		fclose(ftime);
+		*/
+		
 
         //wait to receive pkt
 		struct timespec requestStart, requestEnd;
@@ -1073,57 +940,12 @@ void* client_threadfunc(void* x) {
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////////
         printf("Captured pkt count \n");
+		
         printf("%d\n", (int)totalRPS);
 	}
-
-    #if 1
-	if (thread_num < active_thread_num - 1){
-        //sleep(10);
-        for (int u=0; u<1000000; u++) {
-            const int num_bufs = conn->bufs_num;
-
-            struct ibv_wc wc[num_bufs*2];
-		    int ne, i;
-
-		    ne = ibv_poll_cq(conn->ctx->cq, 2*num_bufs, wc);
-            if (ne < 0) {
-			    fprintf(stderr, "poll CQ failed %d\n", ne);
-		    }
-            for (i = 0; i < ne; ++i) {
-			    if (wc[i].status != IBV_WC_SUCCESS) {
-				    fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
-					    ibv_wc_status_str(wc[i].status),
-					    wc[i].status, (int) wc[i].wr_id);
-			    }
-
-			    int a = (int) wc[i].wr_id;
-			    switch (a) {
-				    case 0 ... num_bufs-1: // SEND_WRID
-					    ++conn->scnt;
-					    --conn->souts;
-					    //#if debug
-						    //printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-					    //#endif
-					    break;
-
-				    case num_bufs ... 2*num_bufs-1:
-					    ++conn->rcnt;
-					    --conn->routs;
-					    //#if debug
-						    //printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,conn->rcnt,conn->scnt,conn->routs,conn->souts);
-					    //#endif
-                }        
-            }
-        }
-        all_rcnts[thread_num] = conn->rcnt;
-        all_scnts[thread_num] = conn->scnt;
-	    ret = pthread_barrier_wait(&barrier);
-    }
-
-    if(conn->rcnt != conn->scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
-    else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, conn->rcnt,conn->scnt,conn->routs,conn->souts);
-    #endif
 	
+	//printf("hello thread %llu \n",thread_num);
+
 	if (conn->pp_close_ctx(conn->ctx))
 		printf("Thread %d couldn't close ctx \n",thread_num);
 
@@ -1140,14 +962,14 @@ void* client_threadfunc(void* x) {
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:l:")) != -1)
     switch (c)
 	{
       case 'w':
         window_size = atoi(optarg);
         break;
       case 't':
-        active_thread_num = atoi(optarg)+1; //adding one for the measurement thread
+        active_thread_num = atoi(optarg); //adding one for the measurement thread
         break;
       case 'd':
         output_dir = optarg;
@@ -1176,6 +998,9 @@ int main(int argc, char *argv[])
 	  case 'c':
 		SERVER_THREADS = atoi(optarg);
 		break;
+	  case 'l':
+		goalLoad = atoi(optarg);
+		break;
       default:
 	  	printf("Unrecognized command line argument\n");
         return 0;
@@ -1185,7 +1010,10 @@ int main(int argc, char *argv[])
 
 	assert(active_thread_num >= 1);
 
-    rps = (double*)malloc((active_thread_num-1)*sizeof(double));
+
+	//q = ReaderWriterQueue<uint64_t>(window_size);
+
+    rps = (double*)malloc((active_thread_num)*sizeof(double));
     all_rcnts = (uint32_t*)malloc(active_thread_num*sizeof(uint32_t));
     all_scnts = (uint32_t*)malloc(active_thread_num*sizeof(uint32_t));
 
@@ -1198,6 +1026,9 @@ int main(int argc, char *argv[])
 	ret = pthread_barrier_init(&barrier, &attr, active_thread_num);
 	assert(ret == 0);
 
+	ret2 = pthread_barrier_init(&barrier2, &attr2, 2*active_thread_num);
+
+
   	struct thread_data tdata [connections.size()];
 	pthread_t pt[active_thread_num];
 	for(int i = 0; i < active_thread_num; i++){
@@ -1207,6 +1038,10 @@ int main(int argc, char *argv[])
 		assert(ret == 0);
 		if(i == 0) sleep(3);
 	}
+
+	my_sleep(10000000000);
+	terminate_load = true;
+
 
 	for(int i = 0; i < active_thread_num; i++){
 		int ret = pthread_join(pt[i], NULL);

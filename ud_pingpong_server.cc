@@ -27,7 +27,7 @@
 #define MEAS_TIME_ON_SERVER 0
 #define ENABLE_HT 0
 #define ENABLE_SERV_TIME 1
-#define RR 1
+#define RR 0
 #define COUNT_IDLE_POLLS 0
 #define MEAS_POLL_LAT 0
 #define MEAS_POLL_LAT_INT 100000
@@ -288,7 +288,7 @@ void* server_threadfunc(void* x) {
 				    conn->buf_send[a-num_bufs][0] = sleep_int_upper;
 				    */
 				    //if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
-					for(int q = 0; q <= 10; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+					for(int q = 0; q <= 18; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
 				#endif
 
 				#if COUNT_IDLE_POLLS

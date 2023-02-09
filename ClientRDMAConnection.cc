@@ -437,9 +437,9 @@ RDMAConnection::RDMAConnection(int id, int isLast, char *ib_devname_in, int gidx
 		fprintf(stderr, "IB device %s not found\n", ib_devname);
 	}
 	
-	if(isLast == 1) {	
-		rx_depth = 1;
-	}
+	//if(isLast == 1) {	
+	//	rx_depth = 1;
+	//}
 	
 	ctx = pp_init_ctx(ib_dev, rx_depth, ib_port, use_event, id);
 	if (!ctx) {

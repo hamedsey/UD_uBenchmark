@@ -69,23 +69,24 @@ public:
 	//const char                *servername = NULL;
 	unsigned int             connect_port = 18515;
 	int                      ib_port = 1;
-	unsigned int             rx_depth = 150;
+	uint64_t	             rx_depth = 16384;
 	unsigned int             size = 20;
-	long long int   		 iters = 1000000000;
+	long long int   		 iters = 1000000;
 	long long int   		 sync_iters = 100000;
 	int                      use_event = 0;
-	unsigned int             routs, souts;
-	unsigned int             rcnt, scnt = 0;
+	uint64_t             routs, souts;
+	uint64_t             rcnt, scnt = 0;
 	int                      num_cq_events = 0;
 	int                      sl = 0;
 	char			 		 gid[33];
 	double                  *measured_latency;
 	//int			 			 gidx = -1;
 
+	uint16_t offset = 0;
   	char ib_devname [7] = "mlx5_3";
 	int gidx = 3;
 	int page_size = sysconf(_SC_PAGESIZE);
-	static const unsigned int bufs_num = 150;	
+	static const unsigned int bufs_num = 128;	
 	static const unsigned int sync_bufs_num = 1;
 
 	char * buf_recv [bufs_num];
