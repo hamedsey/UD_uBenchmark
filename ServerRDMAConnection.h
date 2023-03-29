@@ -56,7 +56,7 @@ public:
 	int pp_post_recv(struct pingpong_context *ctx, int wr_id);
 	struct pingpong_dest* pp_server_exch_dest(char *servername);
 	int pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx);
-	int pp_post_send(struct pingpong_context *ctx, uint32_t qpn, unsigned int length, int wr_id);
+	int pp_post_send(struct pingpong_context *ctx, uint32_t qpn, unsigned int length, int wr_id, bool signal);
 
 //private:
 	struct ibv_device       **dev_list;
@@ -78,6 +78,9 @@ public:
 	int                      num_cq_events = 0;
 	int                      sl = 0;
 	char			 		 gid[33];	
+
+	unsigned int rcnt, scnt;
+
 
   	char ib_devname [7] = "mlx5_5";
 	int gidx = 4;

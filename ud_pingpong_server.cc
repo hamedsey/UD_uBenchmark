@@ -148,14 +148,16 @@ void* server_threadfunc(void* x) {
 		double pollTime = 0.0;
 	#endif
 
+	uint16_t signalInterval = conn->rx_depth-conn->recv_bufs_num;
+
 	while (1) {
 		#if RR
 			offset = ((NUM_QUEUES-1) & (offset+1));		
 			conn = connections[offset];
 		#endif
 
-		struct ibv_wc wc[1];
-		//struct ibv_wc wc[num_bufs*2];
+		//struct ibv_wc wc[1];
+		struct ibv_wc wc[num_bufs*2];
 		
 		int ne, i;
 
@@ -183,7 +185,7 @@ void* server_threadfunc(void* x) {
 					clock_gettime(CLOCK_MONOTONIC,&beginPoll);
 				#endif
 
-				ne = ibv_poll_cq(conn->ctx->cq, 1 , wc);
+				ne = ibv_poll_cq(conn->ctx->cq, num_bufs*2 , wc);
 
 				#if MEAS_POLL_LAT
 					clock_gettime(CLOCK_MONOTONIC,&endPoll);	
@@ -241,6 +243,7 @@ void* server_threadfunc(void* x) {
 			switch (a) {
 			case 0 ... num_bufs-1:
 
+				conn->scnt++;
 				++scnt;
 				--conn->souts;
 
@@ -258,6 +261,7 @@ void* server_threadfunc(void* x) {
 					printedPoll = false;
 				#endif
 
+				conn->rcnt++;
 				++rcnt;
 				--conn->routs;
 
@@ -289,6 +293,12 @@ void* server_threadfunc(void* x) {
 				    */
 				    //if((uint)conn->buf_recv[a-num_bufs][42] == 255 && (uint)conn->buf_recv[a-num_bufs][43] == 255) 
 					for(int q = 0; q <= 18; q++) conn->buf_send[a-num_bufs][q] = (uint)conn->buf_recv[a-num_bufs][q+40];
+					/*
+					if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
+						printf("rcnt = %d \n",rcnt);
+						printf("scnt = %d \n",scnt);
+					}
+					*/
 				#endif
 
 				#if COUNT_IDLE_POLLS
@@ -322,7 +332,9 @@ void* server_threadfunc(void* x) {
 				conn->routs += !(conn->pp_post_recv(conn->ctx, a));
 				//if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
 
-				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
+				//int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs);
+				int success = conn->pp_post_send(conn->ctx, wc[i].src_qp /*conn->rem_dest->qpn*/, conn->size , a-num_bufs, (conn->rcnt%signalInterval == 0));
+
 				//printf("src qp = %d \n",wc[i].src_qp);
 				if (success == EINVAL) printf("Invalid value provided in wr \n");
 				else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation \n");

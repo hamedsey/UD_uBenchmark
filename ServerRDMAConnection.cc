@@ -55,7 +55,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 	if (!ctx)
 		return NULL;
 
-	ctx->send_flags = IBV_SEND_SIGNALED|IBV_SEND_INLINE;
+	ctx->send_flags = IBV_SEND_INLINE;
 	ctx->rx_depth   = rx_depth;
 
 
@@ -137,13 +137,14 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		memset(&attr, 0, sizeof(attr));
 		struct ibv_qp_init_attr init_attr;
 		memset(&init_attr, 0, sizeof(init_attr));
-
 		init_attr.send_cq = ctx->cq;
 		init_attr.recv_cq = ctx->cq;
 		init_attr.cap.max_send_wr  = rx_depth;
 		init_attr.cap.max_recv_wr  = rx_depth;
 		init_attr.cap.max_send_sge = 1;
 		init_attr.cap.max_recv_sge = 1;
+		init_attr.sq_sig_all = 0;
+
 		init_attr.qp_type = IBV_QPT_UD;
 
 		if(id == 0) {
@@ -155,7 +156,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 					goto clean_cq;
 				}
 
-				if(ctx->qp->qp_num %(16*12) == 0) break;
+				if(ctx->qp->qp_num %(256) == 0) break;
 				else ibv_destroy_qp(ctx->qp);
 			}
 		}
@@ -368,7 +369,7 @@ int RDMAConnection::pp_connect_ctx(struct pingpong_context *ctx, int port, int m
 	return 0;
 }
 
-int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, unsigned int length, int wr_id)
+int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, unsigned int length, int wr_id, bool signal)
 {
 	struct ibv_sge list;
 	memset(&list, 0, sizeof(list));
@@ -384,7 +385,8 @@ int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, uns
 	wr.sg_list    = &list;
 	wr.num_sge    = 1;
 	wr.opcode     = IBV_WR_SEND;
-	wr.send_flags = ctx->send_flags;
+	if(signal == true) wr.send_flags = ctx->send_flags | IBV_SEND_SIGNALED;
+	else wr.send_flags = ctx->send_flags;
 	wr.wr.ud.ah = ctx->ah;
 	wr.wr.ud.remote_qpn  = qpn;
 	wr.wr.ud.remote_qkey = 0x11111111;
@@ -475,5 +477,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 	}
 	printf("outstanding recv requests %d\n", routs);
 
+	scnt = 0;
+	rcnt = 0;
 }
 #endif

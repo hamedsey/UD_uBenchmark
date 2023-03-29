@@ -30,13 +30,14 @@
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 1				//enables round robin request distribution per thread
+#define RR 0				//enables round robin request distribution per thread
 #define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
-#define ENABLE_SERV_TIME 1
+#define ENABLE_SERV_TIME 0
 #define SERVICE_TIME_SIZE 0x8000
 #define SEND_SERVICE_TIME 250
+#define REORDER 0
 
 enum {
 	FIXED = 0,
@@ -44,6 +45,7 @@ enum {
 	UNIFORM = 2,
 	EXPONENTIAL = 3,
     BIMODAL = 4,
+	OTHER =  5,
 };
 
 /*
@@ -108,6 +110,7 @@ bool terminate_load = false;
 int SERVER_THREADS = 8;
 uint64_t goalLoad = 0;
 uint16_t mean = 1000;
+uint16_t numberOfPriorities = 0; //not used
 
 //#include "readerwriterqueue.h"
 //#include "atomicops.h"
@@ -182,6 +185,23 @@ double rand_gen() {
    // return a uniformly distributed random value
    return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. );
 }
+
+uint64_t gen_priority(uint64_t *priorityID) {
+
+	static uint16_t index = 0;
+	uint64_t result = priorityID[index];
+	//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
+	if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
+		//printf("worked!, index = %lu \n",index);
+		index = 0;
+	}
+	else {
+		//printf("index = %lu \n",index);
+		index++;
+	}
+	return result;
+}
+
 
 uint64_t gen_latency(int mean, int mode, int isMeasThread, uint64_t *serviceTime) {
     
@@ -356,8 +376,15 @@ void* client_send(void* x) {
 	RDMAConnection *conn = ((struct thread_data*) x)->conn;
 
 	uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+	uint64_t *priorityID = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
 
-	if(distribution_mode == FIXED) for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) serviceTime[i] = mean;
+
+	if(distribution_mode == FIXED) {
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+			serviceTime[i] = mean;
+			priorityID[i] = 0;
+		}
+	}
 	else if(distribution_mode == EXPONENTIAL) {
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
@@ -373,11 +400,49 @@ void* client_send(void* x) {
 			//printf("result = %d \n",result);
 			if (result == 0) serviceTime[i] = mean;
 			else serviceTime[i] = mean*bimodal_ratio;
+		
+			priorityID[i] = result;
+		}
+	}
+	else if(distribution_mode == OTHER) {
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		//std::discrete_distribution<> bm({double(100)});
+		//std::discrete_distribution<> bm({double(50), double(50)});
+		//std::discrete_distribution<> bm({double(34), double(33), double(33)});
+		//std::discrete_distribution<> bm({double(25), double(25), double(25), double(25)});
+		//std::discrete_distribution<> bm({double(20), double(20), double(20), double(20),double(20)});
+		//std::discrete_distribution<> bm({double(10), double(10), double(10), double(10),double(10), double(10), double(10), double(10), double(10),double(10)});
+		//std::discrete_distribution<> bm({double(5), double(5), double(5), double(5),double(5), double(5), double(5), double(5), double(5),double(5),double(5), double(5), double(5), double(5),double(5), double(5), double(5), double(5), double(5),double(5)});
+		/*
+		std::discrete_distribution<> bm({double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
+										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
+										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
+										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
+										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)});
+		*/
+		std::discrete_distribution<> bm({double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)});
+
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+			//printf("result = %d \n",result);
+			serviceTime[i] = mean;		
+			priorityID[i] = bm(gen);
 		}
 	}
 
 	uint64_t singleThreadWait = 1000000000/goalLoad;
 	uint64_t avg_inter_arr_ns = active_thread_num*singleThreadWait;
+
+	//if(thread_num == 6) avg_inter_arr_ns = 10000;
 
 	uint64_t *arrivalSleepTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
 	std::random_device rd{};
@@ -391,8 +456,11 @@ void* client_send(void* x) {
 	if (thread_num == 0) {
 		printf("active thread num = %d \n", active_thread_num);
 		printf("goalLoad = %llu \n", goalLoad);
+		printf("single thread wait = %llu \n", singleThreadWait);
 		printf("avg_inter_arr_ns = %llu \n", avg_inter_arr_ns);
+		printf("QPN = %llu \n", conn->ctx->qp->qp_num);
 	}
+	
 
 	uint16_t i = 0;
 	uint64_t number;
@@ -413,6 +481,8 @@ void* client_send(void* x) {
 			//int i = j % window_size;
 			
 			uint64_t req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
+			uint64_t priority = gen_priority(priorityID);
+
 			req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
                 printf("lat = %d \n",req_lat); 
@@ -428,6 +498,8 @@ void* client_send(void* x) {
 			conn->buf_send[i][0] = lat_upper;
 			conn->buf_send[i][2] = 255;
 			conn->buf_send[i][3] = 255;
+			conn->buf_send[i][10] = priority;
+
 			
 			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
 			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
@@ -448,12 +520,12 @@ void* client_send(void* x) {
 				//if (elapsed + SEND_SERVICE_TIME < arrival_wait_time) my_sleep(arrival_wait_time - elapsed - SEND_SERVICE_TIME);
 				if (elapsed < arrival_wait_time) my_sleep(arrival_wait_time - elapsed);
 
-
-
-
-
-
-				success = conn->pp_post_send(conn->ctx, /*remote_qp0*/ conn->dest_qpn, conn->size, i);
+				#if REORDER 
+					success = conn->pp_post_send(conn->ctx, remote_qp0+priority, conn->size, i);
+				#else 
+					success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, i);
+				#endif
+				
 				sentCount++;
 
 				//}
@@ -476,7 +548,7 @@ void* client_send(void* x) {
 
 
 				if (success == EINVAL) printf("Invalid value provided in wr \n");
-				else if (success == ENOMEM)	printf("Send Queue is full or not enough resources to complete this operation 1, souts = %d \n",sentCount - conn->rcnt);
+				else if (success == ENOMEM)	printf("T%d - Send Queue is full or not enough resources to complete this operation 1, souts = %d \n", thread_num, sentCount - conn->rcnt);
 				else if (success == EFAULT) printf("Invalid value provided in qp \n");
 				else if (success != 0) {
 					printf("success = %d, \n",success);
@@ -1001,6 +1073,9 @@ int main(int argc, char *argv[])
 	  case 'l':
 		goalLoad = atoi(optarg);
 		break;
+	case 'n':
+		numberOfPriorities = atoi(optarg);
+		break;
       default:
 	  	printf("Unrecognized command line argument\n");
         return 0;
@@ -1039,7 +1114,7 @@ int main(int argc, char *argv[])
 		if(i == 0) sleep(3);
 	}
 
-	my_sleep(10000000000);
+	my_sleep(35000000000);
 	terminate_load = true;
 
 
