@@ -19,9 +19,12 @@ parser = argparse.ArgumentParser()
 # Adding optional argument
 #parser.add_argument("-f", "--filePath", help = "path to pcap file")
 parser.add_argument("-d", "--directory", help = "input and output directory")
+parser.add_argument("-p", "--priorities", help = "number of priorities")
 
 # Read arguments from command line
 args = parser.parse_args()
+priorities = int(args.priorities)
+
 input_dir = args.directory
 if input_dir[-1] == "/":
     input_dir = input_dir[:-1]
@@ -45,7 +48,6 @@ if len(folder_path_list) == 0:
 clk_period = 4.6
 skip_the_first = 10000
 
-priorities = 100
 # Creates a list containing 50 lists, each of 0 items, all set to 0
 w, h = 0, priorities
 
@@ -58,8 +60,8 @@ p999Latencies = []
 
 for folder_path in folder_path_list:
     print(folder_path)
-    file_list = [folder_path+"/100k.pcap",folder_path+"/200k.pcap",folder_path+"/300k.pcap",folder_path+"/400k.pcap",folder_path+"/500k.pcap",
-                 folder_path+"/600k.pcap",folder_path+"/700k.pcap",folder_path+"/800k.pcap",folder_path+"/900k.pcap",folder_path+"/1000k.pcap"]
+    file_list = [folder_path+"/100000.pcap",folder_path+"/200000.pcap",folder_path+"/300000.pcap",folder_path+"/400000.pcap",folder_path+"/500000.pcap",
+                 folder_path+"/600000.pcap",folder_path+"/700000.pcap",folder_path+"/800000.pcap",folder_path+"/900000.pcap",folder_path+"/1000000.pcap"]
     #file_list = glob.glob(folder_path+"/*.pcap") 
     #file_list = sorted(file_list,key = os.path.getmtime)
     results = [[]]
@@ -76,6 +78,7 @@ for folder_path in folder_path_list:
         longLatencyCount = 0
 
         for ts, buf in pcap:
+            #print(i)
             i = i+1
             if i < skip_the_first: continue
             eth = dpkt.ethernet.Ethernet(buf)
@@ -151,7 +154,7 @@ for folder_path in folder_path_list:
                                                  "p99_P48","p999_P48","p99_P49","p999_P49"])
         writer.writerows(results)
 
-
+'''
 figure, ((ax)) = plt.subplots(2, 1)
 ax[0].plot(load_list, p99Latencies, '-' , marker='x', label="all")
 ax[1].plot(load_list, p999Latencies, '-' , marker='x', label="all")
@@ -168,6 +171,8 @@ ax[0].set_ylabel('p99 latency (ns)', fontsize=20)
 ax[0].set_ylabel('p999 latency (ns)', fontsize=20)
 ax[1].set_xlabel('Load (RPS)', fontsize=20) 
 plt.savefig(input_dir+'/graph/'+path[1]+'_priority_plot.pdf',bbox_inches='tight')
+'''
+
 '''
 print("longLatencyCount = ", longLatencyCount)
 print("avg = ", mean(latencies)*clk_period)

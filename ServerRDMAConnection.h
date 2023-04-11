@@ -19,20 +19,46 @@
 #include <unistd.h>
 #include <malloc.h>
 
+#define SHARED_CQ 0
+
 using namespace std;
+
+
+
 struct pingpong_dest    *rem_dest;
 
+static const int recv_bufs_num = 1000;//128;
+char * buf_recv [recv_bufs_num];
+struct ibv_mr* mr_recv [recv_bufs_num];
 
-struct pingpong_context {
+char * buf_send [recv_bufs_num];
+struct ibv_mr* mr_send [recv_bufs_num];
+
+uint64_t bufsPerQP = 0;
+
+struct pingpong_context_global *ctxGlobal;
+
+
+struct pingpong_context_global {
 	struct ibv_context	*context;
 	struct ibv_comp_channel *channel;
 	struct ibv_pd		*pd;
-	struct ibv_cq		*cq;
+
+	#if SHARED_CQ
+		struct ibv_cq		*cq;
+	#endif
+};
+
+struct pingpong_context {
 	struct ibv_qp		*qp;
 	struct ibv_ah		*ah;
 	int			 send_flags;
 	int			 rx_depth;
 	struct ibv_port_attr	portinfo;
+
+	#if !SHARED_CQ
+		struct ibv_cq *cq;
+	#endif
 };
 
 
@@ -45,17 +71,17 @@ struct pingpong_dest {
 
 class RDMAConnection {
 public:
-	RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername);
+	RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername, uint64_t numQueues);
 
 	int pp_get_port_info(struct ibv_context *context, int port, struct ibv_port_attr *attr);
 	void wire_gid_to_gid(const char *wgid, union ibv_gid *gid);
 	void gid_to_wire_gid(const union ibv_gid *gid, char wgid[]);
 
-	struct pingpong_context* pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id);
-	int pp_close_ctx(struct pingpong_context *ctx);
+	struct pingpong_context* pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues);
+	int pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues);
 	int pp_post_recv(struct pingpong_context *ctx, int wr_id);
 	struct pingpong_dest* pp_server_exch_dest(char *servername);
-	int pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx);
+	int pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx, int id);
 	int pp_post_send(struct pingpong_context *ctx, uint32_t qpn, unsigned int length, int wr_id, bool signal);
 
 //private:
@@ -85,14 +111,6 @@ public:
   	char ib_devname [7] = "mlx5_5";
 	int gidx = 4;
 	int page_size = sysconf(_SC_PAGESIZE);
-
-	static const int recv_bufs_num = 128;
-	char * buf_recv [recv_bufs_num];
-	struct ibv_mr* mr_recv [recv_bufs_num];
-
-	char * buf_send [recv_bufs_num];
-	struct ibv_mr* mr_send [recv_bufs_num];
-
 };
 
 #endif

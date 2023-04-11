@@ -48,97 +48,130 @@ void RDMAConnection::gid_to_wire_gid(const union ibv_gid *gid, char wgid[])
 		sprintf(&wgid[i * 8], "%08x", htobe32(tmp_gid[i]));
 }
 
-struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id)
+struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues)
 {
+	if(id == 0) {
+		ctxGlobal = (pingpong_context_global*)malloc(sizeof(struct pingpong_context_global));
+		memset(ctxGlobal, 0x00, sizeof(struct pingpong_context_global));
+		if (!ctxGlobal)
+			return NULL;
+
+		//printf("b4 allocating qps \n");
+		//ctx->qp = (struct ibv_qp **)malloc(numQueues*sizeof(struct ibv_qp *));
+		//memset(ctx->qp, 0x00, numQueues*sizeof(struct ibv_qp *));
+		//if (!ctx->qp)
+		//	return NULL;
+		
+		//printf("after allocating qps \n");
+
+		for (int j = 0; j<recv_bufs_num; j++) {
+			buf_recv[j] = (char*)memalign(page_size, 4096);
+			if (!buf_recv[j]) {
+				fprintf(stderr, "Couldn't allocate work buf.\n");
+				goto clean_ctx;
+			}
+			memset(buf_recv[j], 0x7b, 4096);
+
+			buf_send[j] = (char*)memalign(page_size, 4096);
+			if (!buf_send[j]) {
+				fprintf(stderr, "Couldn't allocate work buf.\n");
+				goto clean_ctx;
+			}
+			memset(buf_send[j], 0x7b, 4096);
+		}
+
+		ctxGlobal->context = ibv_open_device(ib_dev);
+		if (!ctxGlobal->context) {
+			fprintf(stderr, "Couldn't get context for %s\n",
+				ibv_get_device_name(ib_dev));
+			goto clean_buffer;
+		}
+
+		{
+			struct ibv_port_attr port_info = {};
+			int mtu;
+
+			if (ibv_query_port(ctxGlobal->context, port, &port_info)) {
+				fprintf(stderr, "Unable to query port info for port %d\n", port);
+				goto clean_device;
+			}
+			mtu = 1 << (port_info.active_mtu + 7);
+			if (1024 > mtu) { //size > mtu
+				fprintf(stderr, "Requested size larger than port MTU (%d)\n", mtu);
+				goto clean_device;
+			}
+		}
+
+		if (use_event) {
+			ctxGlobal->channel = ibv_create_comp_channel(ctxGlobal->context);
+			if (!ctxGlobal->channel) {
+				fprintf(stderr, "Couldn't create completion channel\n");
+				goto clean_device;
+			}
+		} else
+			ctxGlobal->channel = NULL;
+
+		ctxGlobal->pd = ibv_alloc_pd(ctxGlobal->context);
+		if (!ctxGlobal->pd) {
+			fprintf(stderr, "Couldn't allocate PD\n");
+			goto clean_comp_channel;
+		}
+
+		for (int j = 0; j<recv_bufs_num; j++) {
+			mr_recv[j] = ibv_reg_mr(ctxGlobal->pd, buf_recv[j], 4096, IBV_ACCESS_LOCAL_WRITE);
+			if (!mr_recv[j]) {
+				fprintf(stderr, "Couldn't register MR\n");
+				goto clean_pd;
+			}
+			mr_send[j] = ibv_reg_mr(ctxGlobal->pd, buf_send[j], 4096, IBV_ACCESS_LOCAL_WRITE);
+			if (!mr_send[j]) {
+				fprintf(stderr, "Couldn't register MR\n");
+				goto clean_pd;
+			}
+		}
+
+		#if SHARED_CQ
+			ctxGlobal->cq = ibv_create_cq(ctxGlobal->context, 2*rx_depth + 1, NULL,
+						ctxGlobal->channel, 0);
+			if (!ctxGlobal->cq) {
+				fprintf(stderr, "Couldn't create CQ\n");
+				goto clean_mr;
+			}
+		#endif
+	}
+
 	ctx = (pingpong_context*)malloc(sizeof(struct pingpong_context));
 	memset(ctx, 0x00, sizeof(struct pingpong_context));
 	if (!ctx)
 		return NULL;
 
+
 	ctx->send_flags = IBV_SEND_INLINE;
 	ctx->rx_depth   = rx_depth;
 
-
-	for (int j = 0; j<recv_bufs_num; j++) {
-		buf_recv[j] = (char*)memalign(page_size, 4096);
-		if (!buf_recv[j]) {
-			fprintf(stderr, "Couldn't allocate work buf.\n");
-			goto clean_ctx;
+	#if !SHARED_CQ
+		ctx->cq = ibv_create_cq(ctxGlobal->context, 2*rx_depth + 1, NULL,
+					ctxGlobal->channel, 0);
+		if (!ctx->cq) {
+			fprintf(stderr, "Couldn't create CQ\n");
+			goto clean_mr;
 		}
-		memset(buf_recv[j], 0x7b, 4096);
+	#endif
 
-		buf_send[j] = (char*)memalign(page_size, 4096);
-		if (!buf_send[j]) {
-			fprintf(stderr, "Couldn't allocate work buf.\n");
-			goto clean_ctx;
-		}
-		memset(buf_send[j], 0x7b, 4096);
-	}
-
-	ctx->context = ibv_open_device(ib_dev);
-	if (!ctx->context) {
-		fprintf(stderr, "Couldn't get context for %s\n",
-			ibv_get_device_name(ib_dev));
-		goto clean_buffer;
-	}
-
-	{
-		struct ibv_port_attr port_info = {};
-		int mtu;
-
-		if (ibv_query_port(ctx->context, port, &port_info)) {
-			fprintf(stderr, "Unable to query port info for port %d\n", port);
-			goto clean_device;
-		}
-		mtu = 1 << (port_info.active_mtu + 7);
-		if (1024 > mtu) { //size > mtu
-			fprintf(stderr, "Requested size larger than port MTU (%d)\n", mtu);
-			goto clean_device;
-		}
-	}
-
-	if (use_event) {
-		ctx->channel = ibv_create_comp_channel(ctx->context);
-		if (!ctx->channel) {
-			fprintf(stderr, "Couldn't create completion channel\n");
-			goto clean_device;
-		}
-	} else
-		ctx->channel = NULL;
-
-	ctx->pd = ibv_alloc_pd(ctx->context);
-	if (!ctx->pd) {
-		fprintf(stderr, "Couldn't allocate PD\n");
-		goto clean_comp_channel;
-	}
-
-	for (int j = 0; j<recv_bufs_num; j++) {
-		mr_recv[j] = ibv_reg_mr(ctx->pd, buf_recv[j], 4096, IBV_ACCESS_LOCAL_WRITE);
-		if (!mr_recv[j]) {
-			fprintf(stderr, "Couldn't register MR\n");
-			goto clean_pd;
-		}
-		mr_send[j] = ibv_reg_mr(ctx->pd, buf_send[j], 4096, IBV_ACCESS_LOCAL_WRITE);
-		if (!mr_send[j]) {
-			fprintf(stderr, "Couldn't register MR\n");
-			goto clean_pd;
-		}
-	}
-
-	ctx->cq = ibv_create_cq(ctx->context, 2*rx_depth + 1, NULL,
-				ctx->channel, 0);
-	if (!ctx->cq) {
-		fprintf(stderr, "Couldn't create CQ\n");
-		goto clean_mr;
-	}
-
-	{
+	//{
 		struct ibv_qp_attr attr;
 		memset(&attr, 0, sizeof(attr));
 		struct ibv_qp_init_attr init_attr;
 		memset(&init_attr, 0, sizeof(init_attr));
-		init_attr.send_cq = ctx->cq;
-		init_attr.recv_cq = ctx->cq;
+				
+		#if SHARED_CQ
+			init_attr.send_cq = ctxGlobal->cq;
+			init_attr.recv_cq = ctxGlobal->cq;
+		#else
+			init_attr.send_cq = ctx->cq;
+			init_attr.recv_cq = ctx->cq;
+		#endif
+
 		init_attr.cap.max_send_wr  = rx_depth;
 		init_attr.cap.max_recv_wr  = rx_depth;
 		init_attr.cap.max_send_sge = 1;
@@ -150,7 +183,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		if(id == 0) {
 			while(1)
 			{
-				ctx->qp = ibv_create_qp(ctx->pd, &init_attr);
+				ctx->qp = ibv_create_qp(ctxGlobal->pd, &init_attr);
 				if (!ctx->qp)  {
 					fprintf(stderr, "Couldn't create QP\n");
 					goto clean_cq;
@@ -161,7 +194,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 			}
 		}
 		else {
-			ctx->qp = ibv_create_qp(ctx->pd, &init_attr);
+			ctx->qp = ibv_create_qp(ctxGlobal->pd, &init_attr);
 				if (!ctx->qp)  {
 					fprintf(stderr, "Couldn't create QP\n");
 					goto clean_cq;
@@ -172,7 +205,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		if (init_attr.cap.max_inline_data >= (unsigned int) 1024) { //size
 			ctx->send_flags |= IBV_SEND_INLINE;
 		}
-	}
+	//}
 	{
 		struct ibv_qp_attr attr; 
 		memset(&attr, 0, sizeof(attr));
@@ -198,7 +231,11 @@ clean_qp:
 	ibv_destroy_qp(ctx->qp);
 
 clean_cq:
-	ibv_destroy_cq(ctx->cq);
+	#if SHARED_CQ
+		ibv_destroy_cq(ctxGlobal->cq);
+	#else
+		ibv_destroy_cq(ctx->cq);
+	#endif
 
 clean_mr:
 	for (int j = 0; j<recv_bufs_num; j++) {
@@ -207,14 +244,14 @@ clean_mr:
 	}
 
 clean_pd:
-	ibv_dealloc_pd(ctx->pd);
+	ibv_dealloc_pd(ctxGlobal->pd);
 
 clean_comp_channel:
-	if (ctx->channel)
-		ibv_destroy_comp_channel(ctx->channel);
+	if (ctxGlobal->channel)
+		ibv_destroy_comp_channel(ctxGlobal->channel);
 
 clean_device:
-	ibv_close_device(ctx->context);
+	ibv_close_device(ctxGlobal->context);
 
 clean_buffer:
 	for (int j = 0; j<recv_bufs_num; j++) {
@@ -233,9 +270,17 @@ int RDMAConnection::pp_post_recv(struct pingpong_context *ctx, int wr_id)
 	struct ibv_sge list;
 	memset(&list, 0, sizeof(list));
 
-	list.addr = (uintptr_t) buf_recv[wr_id-recv_bufs_num];
+	uint16_t bufIndex = wr_id-recv_bufs_num;
+	//uint16_t qpID = bufIndex/bufsPerQP;
+
+	//printf("bufIndex = %d \n", bufIndex);
+	//printf("qpID = %d \n",qpID);
+	//printf("bufsPerQP = %d \n", bufsPerQP);
+
+
+	list.addr = (uintptr_t) buf_recv[bufIndex];
 	list.length = 40 + size;
-	list.lkey = mr_recv[wr_id-recv_bufs_num]->lkey;
+	list.lkey = mr_recv[bufIndex]->lkey;
 
 	struct ibv_recv_wr wr;
 	memset(&wr, 0, sizeof(wr));
@@ -249,17 +294,26 @@ int RDMAConnection::pp_post_recv(struct pingpong_context *ctx, int wr_id)
 	return ibv_post_recv(ctx->qp, &wr, &bad_wr);
 }
 
-int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx)
+int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues)
 {
-	if (ibv_destroy_qp(ctx->qp)) {
-		fprintf(stderr, "Couldn't destroy QP\n");
-		return 1;
-	}
+	//for(int i = 0; i < numQueues; i++){
+		if (ibv_destroy_qp(ctx->qp)) {
+			fprintf(stderr, "Couldn't destroy QP\n");
+			return 1;
+		}
+	//}
+	#if SHARED_CQ
+		if (ibv_destroy_cq(ctxGlobal->cq)) {
+			fprintf(stderr, "Couldn't destroy CQ\n");
+			return 1;
+		}	
+	#else
+		if (ibv_destroy_cq(ctx->cq)) {
+			fprintf(stderr, "Couldn't destroy CQ\n");
+			return 1;
+		}	
+	#endif
 
-	if (ibv_destroy_cq(ctx->cq)) {
-		fprintf(stderr, "Couldn't destroy CQ\n");
-		return 1;
-	}
 
 	for (int j = 0; j<recv_bufs_num; j++) {
 		if (ibv_dereg_mr(mr_recv[j])) {
@@ -277,19 +331,19 @@ int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx)
 		return 1;
 	}
 
-	if (ibv_dealloc_pd(ctx->pd)) {
+	if (ibv_dealloc_pd(ctxGlobal->pd)) {
 		fprintf(stderr, "Couldn't deallocate PD\n");
 		return 1;
 	}
 
-	if (ctx->channel) {
-		if (ibv_destroy_comp_channel(ctx->channel)) {
+	if (ctxGlobal->channel) {
+		if (ibv_destroy_comp_channel(ctxGlobal->channel)) {
 			fprintf(stderr, "Couldn't destroy completion channel\n");
 			return 1;
 		}
 	}
 
-	if (ibv_close_device(ctx->context)) {
+	if (ibv_close_device(ctxGlobal->context)) {
 		fprintf(stderr, "Couldn't release context\n");
 		return 1;
 	}
@@ -324,7 +378,7 @@ struct pingpong_dest* RDMAConnection::pp_server_exch_dest(char *servername)
 	return rem_dest;
 }
 
-int RDMAConnection::pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx)
+int RDMAConnection::pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx, int id)
 {
 	struct ibv_ah_attr ah_attr;
 	memset(&ah_attr, 0, sizeof(ah_attr));
@@ -360,7 +414,7 @@ int RDMAConnection::pp_connect_ctx(struct pingpong_context *ctx, int port, int m
 	ah_attr.grh.dgid = rem_dest->gid;
 	ah_attr.grh.sgid_index = sgid_idx;
 
-	ctx->ah = ibv_create_ah(ctx->pd, &ah_attr);
+	ctx->ah = ibv_create_ah(ctxGlobal->pd, &ah_attr);
 	if (!ctx->ah) {
 		fprintf(stderr, "Failed to create AH\n");
 		return 1;
@@ -385,7 +439,7 @@ int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, uns
 	wr.sg_list    = &list;
 	wr.num_sge    = 1;
 	wr.opcode     = IBV_WR_SEND;
-	if(signal == true) wr.send_flags = ctx->send_flags | IBV_SEND_SIGNALED;
+	if(signal == true) wr.send_flags = ctx->send_flags | IBV_SEND_SIGNALED; //need to have a signaled completion every signalInterval
 	else wr.send_flags = ctx->send_flags;
 	wr.wr.ud.ah = ctx->ah;
 	wr.wr.ud.remote_qpn  = qpn;
@@ -395,9 +449,9 @@ int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, uns
 	return ibv_post_send(ctx->qp, &wr, &bad_wr);
 }
 
-RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* servername)
+RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* servername, uint64_t numQueues)
 {
-
+	//printf("id = %d \n", id);
 	strncpy(ib_devname, ib_devname_in, 7);
 
 	dev_list = ibv_get_device_list(NULL);
@@ -411,7 +465,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 	int b;
 	for (b = 0; dev_list[b]; ++b)
 		if (!strcmp(ibv_get_device_name(dev_list[b]), ib_devname)) {
-			printf("breaking! \n");
+			//printf("breaking! \n");
 			break;
 		}
 	ib_dev = dev_list[b];
@@ -419,17 +473,26 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 		fprintf(stderr, "IB device %s not found\n", ib_devname);
 	}
 
-	ctx = pp_init_ctx(ib_dev, rx_depth, ib_port, use_event, id);
+	//printf("before init ctx, id = %d \n",id);
+	ctx = pp_init_ctx(ib_dev, rx_depth, ib_port, use_event, id, numQueues);
 	if (!ctx) {
 		printf("context creation invalid \n");
 	}
+	//printf("after init ctx, id = %d \n",id);
 
-	if (use_event)
-		if (ibv_req_notify_cq(ctx->cq, 0)) {
-			fprintf(stderr, "Couldn't request CQ notification\n");
-		}
+	if (use_event) {
+		#if SHARED_CQ
+			if (ibv_req_notify_cq(ctxGlobal->cq, 0)) {
+				fprintf(stderr, "Couldn't request CQ notification\n");
+			}
+		#else
+			if (ibv_req_notify_cq(ctx->cq, 0)) {
+				fprintf(stderr, "Couldn't request CQ notification\n");
+			}
+		#endif
+	}
 
-	if (pp_get_port_info(ctx->context, ib_port, &ctx->portinfo)) {
+	if (pp_get_port_info(ctxGlobal->context, ib_port, &ctx->portinfo)) {
 		fprintf(stderr, "Couldn't get port info\n");
 	}
 	my_dest.lid = ctx->portinfo.lid;
@@ -438,7 +501,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 	my_dest.psn = lrand48() & 0x000000;
 
 	if (gidx >= 0) {
-		if (ibv_query_gid(ctx->context, ib_port, gidx, &my_dest.gid)) {
+		if (ibv_query_gid(ctxGlobal->context, ib_port, gidx, &my_dest.gid)) {
 			fprintf(stderr, "Could not get local gid for gid index "
 								"%d\n", gidx);
 		}
@@ -461,21 +524,31 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 		printf("  remote address: LID 0x%04x, QPN 0x%06x, PSN 0x%06x, GID %s\n",rem_dest->lid, rem_dest->qpn, rem_dest->psn, gid);
 	}
 
-	if (pp_connect_ctx(ctx, ib_port, my_dest.psn, sl, gidx)) {
+	//printf("b4 connect ctx \n");
+
+	if (pp_connect_ctx(ctx, ib_port, my_dest.psn, sl, gidx, id)) {
 		fprintf(stderr, "Couldn't connect to remote QP\n");
 		free(rem_dest);
 		rem_dest = NULL;
 		//goto out;
 	}
 
-	for(int r = 0; r < recv_bufs_num; r++) {
+	//printf("after connect ctx \n");
+
+	uint16_t startbuf = id*recv_bufs_num/numQueues;
+	uint16_t endbuf = startbuf + (recv_bufs_num/numQueues);
+	for(int r = startbuf; r < endbuf; r++) {
+		//printf("r = %d \n", r);
 		if(!pp_post_recv(ctx, r+recv_bufs_num)) routs++;
 	}
 
-	if (routs < recv_bufs_num) {
+	//printf("after post recv \n");
+
+
+	if (routs < recv_bufs_num/numQueues) {
 		fprintf(stderr, "Couldn't post -recv_bufs_num- receive requests (%d)\n", routs);
 	}
-	printf("outstanding recv requests %d\n", routs);
+	//printf("outstanding recv requests %d\n", routs);
 
 	scnt = 0;
 	rcnt = 0;

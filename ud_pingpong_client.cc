@@ -37,7 +37,7 @@
 #define ENABLE_SERV_TIME 0
 #define SERVICE_TIME_SIZE 0x8000
 #define SEND_SERVICE_TIME 250
-#define REORDER 0
+#define REORDER 1 //set to zero if you want all traffic to go to a single server core
 
 enum {
 	FIXED = 0,
@@ -126,7 +126,7 @@ int long_query_percent = -1;
 
 uint32_t * all_rcnts;
 uint32_t * all_scnts;
-
+uint64_t * allPrioCnts;
 
 inline double now() {
     struct timeval tv;
@@ -186,10 +186,10 @@ double rand_gen() {
    return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. );
 }
 
-uint64_t gen_priority(uint64_t *priorityID) {
+uint8_t gen_priority(uint8_t *priorityID) {
 
 	static uint16_t index = 0;
-	uint64_t result = priorityID[index];
+	uint8_t result = priorityID[index];
 	//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
 	if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
 		//printf("worked!, index = %lu \n",index);
@@ -376,7 +376,7 @@ void* client_send(void* x) {
 	RDMAConnection *conn = ((struct thread_data*) x)->conn;
 
 	uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
-	uint64_t *priorityID = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+	uint8_t *priorityID = (uint8_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
 
 
 	if(distribution_mode == FIXED) {
@@ -396,7 +396,7 @@ void* client_send(void* x) {
 		std::mt19937 gen{rd()};
 		std::discrete_distribution<> bm({double(100-long_query_percent), double(long_query_percent)});
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
-			int result = bm(gen);
+			uint8_t result = bm(gen);
 			//printf("result = %d \n",result);
 			if (result == 0) serviceTime[i] = mean;
 			else serviceTime[i] = mean*bimodal_ratio;
@@ -407,21 +407,22 @@ void* client_send(void* x) {
 	else if(distribution_mode == OTHER) {
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
-		//std::discrete_distribution<> bm({double(100)});
-		//std::discrete_distribution<> bm({double(50), double(50)});
-		//std::discrete_distribution<> bm({double(34), double(33), double(33)});
-		//std::discrete_distribution<> bm({double(25), double(25), double(25), double(25)});
-		//std::discrete_distribution<> bm({double(20), double(20), double(20), double(20),double(20)});
-		//std::discrete_distribution<> bm({double(10), double(10), double(10), double(10),double(10), double(10), double(10), double(10), double(10),double(10)});
-		//std::discrete_distribution<> bm({double(5), double(5), double(5), double(5),double(5), double(5), double(5), double(5), double(5),double(5),double(5), double(5), double(5), double(5),double(5), double(5), double(5), double(5), double(5),double(5)});
+		//std::discrete_distribution<> bm;
+
 		/*
-		std::discrete_distribution<> bm({double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
+		if(numberOfPriorities == 1) std::discrete_distribution<> bm({double(100)});
+		else if (numberOfPriorities == 2) std::discrete_distribution<> bm({double(50), double(50)});
+		else if (numberOfPriorities == 3) std::discrete_distribution<> bm({double(34), double(33), double(33)});
+		else if (numberOfPriorities == 4) std::discrete_distribution<> bm({double(25), double(25), double(25), double(25)});
+		else if (numberOfPriorities == 5) std::discrete_distribution<> bm({double(20), double(20), double(20), double(20),double(20)});
+		else if (numberOfPriorities ==10) std::discrete_distribution<> bm({double(10), double(10), double(10), double(10),double(10), double(10), double(10), double(10), double(10),double(10)});
+		else if (numberOfPriorities ==20) std::discrete_distribution<> bm({double(5), double(5), double(5), double(5),double(5), double(5), double(5), double(5), double(5),double(5),double(5), double(5), double(5), double(5),double(5), double(5), double(5), double(5), double(5),double(5)});
+		else if (numberOfPriorities ==50) std::discrete_distribution<> bm({double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
 										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
 										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
 										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)
 										,double(2), double(2), double(2), double(2),double(2), double(2), double(2), double(2), double(2),double(2)});
-		*/
-		std::discrete_distribution<> bm({double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
+		else if (numberOfPriorities==100) std::discrete_distribution<> bm({double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
 										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
 										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
 										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
@@ -431,6 +432,10 @@ void* client_send(void* x) {
 										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
 										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)
 										,double(1), double(1), double(1), double(1),double(1), double(1), double(1), double(1), double(1),double(1)});
+		*/
+ 
+    	std::uniform_int_distribution<uint8_t> bm(0, numberOfPriorities-1);
+
 
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
@@ -481,7 +486,7 @@ void* client_send(void* x) {
 			//int i = j % window_size;
 			
 			uint64_t req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
-			uint64_t priority = gen_priority(priorityID);
+			uint8_t priority = gen_priority(priorityID);
 
 			req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
@@ -664,6 +669,7 @@ void* client_threadfunc(void* x) {
 		double prev_clock = now();
 		//while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
 		uint64_t outs_send = 0;
+		uint8_t priorityID = 0;
 		while(terminate_load == false) {
 			//if (terminate_load == true) break;
 
@@ -722,6 +728,8 @@ void* client_threadfunc(void* x) {
                         #endif
 						//if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
 
+						priorityID = (uint)conn->buf_recv[a-num_bufs][50];
+						allPrioCnts[priorityID]++;
 
 						if(!conn->pp_post_recv(conn->ctx, a, false)) ++conn->routs;
 						if (conn->routs != window_size) fprintf(stderr,"Loading thread %d couldn't post receive (%d)\n", thread_num, conn->routs);
@@ -817,7 +825,7 @@ void* client_threadfunc(void* x) {
 	assert(!ret);
 
 
-
+	/*
 	//sending final packet to capture ingress and egress pkt count
 	if(thread_num == active_thread_num - 1) {
 		//int num_bufs = conn->sync_bufs_num;
@@ -856,6 +864,7 @@ void* client_threadfunc(void* x) {
 		}
 		//printf("exited while loop \n");
 	}
+	*/
 
 	//if(thread_num == active_thread_num - 1){
 	//	rps[thread_num] = conn->sync_iters/(usec/1000000.);
@@ -912,6 +921,8 @@ void* client_threadfunc(void* x) {
 		
 
         //wait to receive pkt
+		
+		/*
 		struct timespec requestStart, requestEnd;
         bool received = false;
 		while (received == false) {
@@ -1009,10 +1020,10 @@ void* client_threadfunc(void* x) {
 					#endif
 				}
 		}
-
+		
         ////////////////////////////////////////////////////////////////////////////////////////////////////////
         printf("Captured pkt count \n");
-		
+		*/
         printf("%d\n", (int)totalRPS);
 	}
 	
@@ -1034,7 +1045,7 @@ void* client_threadfunc(void* x) {
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:l:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:l:n:")) != -1)
     switch (c)
 	{
       case 'w':
@@ -1073,7 +1084,7 @@ int main(int argc, char *argv[])
 	  case 'l':
 		goalLoad = atoi(optarg);
 		break;
-	case 'n':
+	  case 'n':
 		numberOfPriorities = atoi(optarg);
 		break;
       default:
@@ -1091,6 +1102,9 @@ int main(int argc, char *argv[])
     rps = (double*)malloc((active_thread_num)*sizeof(double));
     all_rcnts = (uint32_t*)malloc(active_thread_num*sizeof(uint32_t));
     all_scnts = (uint32_t*)malloc(active_thread_num*sizeof(uint32_t));
+
+	allPrioCnts = (uint64_t*)malloc(numberOfPriorities*sizeof(uint64_t));
+	for(int i = 0; i < numberOfPriorities; i++) allPrioCnts[i] = 0;
 
 	vector<RDMAConnection *> connections;
 	for (int i = 0; i < active_thread_num; i++) {
@@ -1114,14 +1128,15 @@ int main(int argc, char *argv[])
 		if(i == 0) sleep(3);
 	}
 
-	my_sleep(35000000000);
+	my_sleep(60000000000);
 	terminate_load = true;
-
 
 	for(int i = 0; i < active_thread_num; i++){
 		int ret = pthread_join(pt[i], NULL);
 		assert(!ret);
 	}
-	
 
+	for(int i = 0; i < numberOfPriorities; i++){
+		printf("%d \n",allPrioCnts[i]);		
+	}		
 }
