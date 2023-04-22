@@ -19,7 +19,7 @@
 #include <unistd.h>
 #include <malloc.h>
 
-#define SHARED_CQ 0
+#define SHARED_CQ 1
 
 using namespace std;
 

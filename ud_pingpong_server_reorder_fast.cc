@@ -37,7 +37,7 @@
 #define MEAS_POLL_LAT_INT 100000
 #define MEAS_POLL_LAT_WARMUP 10001
 
-#define PROCESS_IN_ORDER 0
+#define PROCESS_IN_ORDER 1
 #define STRICT_PRIORITY 0
 #define ROUND_ROBIN 0
 #define WEIGHTED_ROUND_ROBIN 0
@@ -184,7 +184,13 @@ void* server_threadfunc(void* x) {
 	uint64_t bufID;
 	uint64_t srcQP;
 	#if PROCESS_IN_ORDER
-		list <recvReq> inOrderArrivals;
+		//list <recvReq> inOrderArrivals;
+		recvReq *inOrderArrivals = (recvReq *)malloc(recv_bufs_num*sizeof(recvReq));
+		for(uint16_t index = 0; index < recv_bufs_num; index++) {
+			inOrderArrivals[index].bufID = 0;
+			inOrderArrivals[index].srcQP = 0;
+		}
+		uint16_t head, tail, size = 0;
 	#endif
 
 	uint8_t checkCnt = 0;
@@ -354,7 +360,13 @@ void* server_threadfunc(void* x) {
 				#endif
 
 				#if PROCESS_IN_ORDER
-					inOrderArrivals.emplace_back(x);
+					//inOrderArrivals.emplace_back(x);
+
+					if(head == tail && size == recv_bufs_num) continue;
+					else if(head == recv_bufs_num-1) head = 0;
+					else head++;
+					inOrderArrivals[head] = x;
+					size++;
 				#endif
 
 				#if !SHARED_CQ
@@ -374,7 +386,7 @@ void* server_threadfunc(void* x) {
 #if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY
 	if(!skipList.empty() && skipList.size() != 0) {
 #elif PROCESS_IN_ORDER
-	if(inOrderArrivals.size() > 0) {
+	if(size > 0) { //inOrderArrivals.size() > 0) {
 #elif !SHARED_CQ 
 	if(received == true) {
 		received = false;
@@ -465,11 +477,18 @@ void* server_threadfunc(void* x) {
 		#endif
 
 		#if PROCESS_IN_ORDER && !STRICT_PRIORITY && !ROUND_ROBIN && !WEIGHTED_ROUND_ROBIN
-			assert(inOrderArrivals.size() > 0);
-			recvReq tmp = inOrderArrivals.front();
+			//assert(size > 0);//inOrderArrivals.size() > 0);
+
+			if(head == tail && size == 0) continue;
+			else if(tail == recv_bufs_num-1) tail = 0;
+			else tail++;
+
+			recvReq tmp = inOrderArrivals[tail];//.front();
 			bufID = tmp.bufID;
 			srcQP = tmp.srcQP;
-			inOrderArrivals.pop_front();
+			size--;
+			//printf("arrivals size = %llu \n", size);
+			//inOrderArrivals.pop_front();
 		#endif
 
 
@@ -502,11 +521,14 @@ void* server_threadfunc(void* x) {
 
 			checkCnt++;
 
-			assert(inOrderArrivals.size() > 0);
-			recvReq tmp = inOrderArrivals.front();
+			if(head == tail && size == 0) continue;
+			else if(tail == recv_bufs_num-1) tail = 0;
+			else tail++;
+
+			recvReq tmp = inOrderArrivals[tail];//.front();
 			bufID = tmp.bufID;
 			srcQP = tmp.srcQP;
-			inOrderArrivals.pop_front();
+			size--;
 		#endif
 
 
@@ -535,11 +557,14 @@ void* server_threadfunc(void* x) {
 			srcQP = temp.srcQP;
 			metaCQ[priority].pop_front();
 
-			assert(inOrderArrivals.size() > 0);
-			recvReq tmp = inOrderArrivals.front();
+			if(head == tail && size == 0) continue;
+			else if(tail == recv_bufs_num-1) tail = 0;
+			else tail++;
+
+			recvReq tmp = inOrderArrivals[tail];//.front();
 			bufID = tmp.bufID;
 			srcQP = tmp.srcQP;
-			inOrderArrivals.pop_front();
+			size--;
 		#endif
 
 
@@ -555,11 +580,14 @@ void* server_threadfunc(void* x) {
 			if(metaCQ[priority].size() == 0) skipList.erase(iter); //skipList.erase(priority);
 			//assert(priority == (uint)conn->buf_recv[bufID-num_bufs][50]);
 
-			assert(inOrderArrivals.size() > 0);
-			recvReq tmp = inOrderArrivals.front();
+			if(head == tail && size == 0) continue;
+			else if(tail == recv_bufs_num-1) tail = 0;
+			else tail++;
+
+			recvReq tmp = inOrderArrivals[tail];//.front();
 			bufID = tmp.bufID;
 			srcQP = tmp.srcQP;
-			inOrderArrivals.pop_front();
+			size--;
 		#endif
 
 		#if PRINT
@@ -738,7 +766,7 @@ void* server_threadfunc(void* x) {
 	}
 
 
-
+	/*
 	#if 1
 	//if (thread_num < active_thread_num - 1){
 	sleep(10);
@@ -786,11 +814,10 @@ void* server_threadfunc(void* x) {
 	    }
 	}
 
-
 	if(rcnt != scnt) printf("\n T%d DID NOT DRAIN! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, rcnt,scnt,conn->routs,conn->souts);
 	else printf("\n T%d DRAINED! - rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num, rcnt,scnt,conn->routs,conn->souts);
 	#endif
-
+	*/
 
 
 

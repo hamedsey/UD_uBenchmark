@@ -39,9 +39,10 @@ mkdir "fresh"$queues"/"$dirName
 '
 for load in 50000 100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000;do
     sudo tcpdump -i enp24s0 src 192.168.1.5 and dst port 4791 -w "fresh"$queues"/"$dirName"/"$load.pcap &
-    #if doing sq change n to one otherwise $queues 
+    #if doing sq/one priority change n to one otherwise $queues 
 
-    ./UD_Client -w 128 -t 1 -d lat -v mlx5_0 -g 3 -m 5 -s 192.168.1.5 -c 1 -n 1 -q $serverQpn -l $load >> "fresh"$queues"/"$dirName"/"runlog.txt
+    ./UD_Client -w 128 -t 1 -d lat -v mlx5_0 -g 3 -m 5 -s 192.168.1.5 -c 1 -n $queues -q $serverQpn -l $load >> "fresh"$queues"/"$dirName"/"runlog.txt
+    
     #sleep 10
     sudo kill -15 $(pgrep "tcpdump")
 
