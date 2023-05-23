@@ -24,20 +24,23 @@
 #include <vector>
 #include <sys/mman.h>
 #include <pthread.h> 
+#include "rdma_uc.cc"
 
 //#define active_thread_num 12+1  		//n loading threads,1 meas. thread 
 #define debug 0
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 0				//enables round robin request distribution per thread
+#define RR 0			//enables round robin request distribution per thread
 #define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 0
 #define SERVICE_TIME_SIZE 0x8000
 #define SEND_SERVICE_TIME 250
-#define REORDER 1 //set to zero if you want all traffic to go to a single server core
+#define REORDER 1 //set to zero if you want all traffic to go to a single server core (AND turnoff assert on server)
+
+#define RDMA_WRITE_TO_BUF_WITH_EVERY_SEND 0
 
 enum {
 	FIXED = 0,
@@ -46,6 +49,7 @@ enum {
 	EXPONENTIAL = 3,
     BIMODAL = 4,
 	OTHER =  5,
+	PC = 6,
 };
 
 /*
@@ -111,6 +115,7 @@ int SERVER_THREADS = 8;
 uint64_t goalLoad = 0;
 uint16_t mean = 1000;
 uint16_t numberOfPriorities = 0; //not used
+uint64_t tcp_port = 20001;
 
 //#include "readerwriterqueue.h"
 //#include "atomicops.h"
@@ -443,6 +448,30 @@ void* client_send(void* x) {
 			priorityID[i] = bm(gen);
 		}
 	}
+	else if(distribution_mode == PC) {
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		std::discrete_distribution<> bm({95, 5});
+		
+		uint16_t numQueuesGettingMoreLoad = numberOfPriorities/5;
+		uint16_t twentyPercent = 0;
+		uint16_t eightyPercent = numQueuesGettingMoreLoad;
+
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+			//printf("result = %d \n",result);
+			serviceTime[i] = mean;	
+			if(bm(gen) == 0) {
+				priorityID[i] = twentyPercent;
+				if(twentyPercent == numQueuesGettingMoreLoad-1) twentyPercent = 0;
+				else twentyPercent++;
+			}
+			else {
+				priorityID[i] = eightyPercent;
+				if(eightyPercent == numberOfPriorities-1) eightyPercent = numQueuesGettingMoreLoad;
+				else eightyPercent++;
+			}
+		}
+	}
 
 	uint64_t singleThreadWait = 1000000000/goalLoad;
 	uint64_t avg_inter_arr_ns = active_thread_num*singleThreadWait;
@@ -580,6 +609,12 @@ void* client_send(void* x) {
 					#endif
 
 				}
+
+				#if RDMA_WRITE_TO_BUF_WITH_EVERY_SEND
+					*(res.buf) = htonll(64);
+					post_send(&res, IBV_WR_RDMA_WRITE);
+					poll_completion(&res);
+				#endif
 
 				#if RR
 					conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
@@ -825,7 +860,7 @@ void* client_threadfunc(void* x) {
 	assert(!ret);
 
 
-	/*
+	
 	//sending final packet to capture ingress and egress pkt count
 	if(thread_num == active_thread_num - 1) {
 		//int num_bufs = conn->sync_bufs_num;
@@ -835,6 +870,8 @@ void* client_threadfunc(void* x) {
 			conn->buf_send[i][0] = 0;
 			conn->buf_send[i][2] = 255;
 			conn->buf_send[i][3] = 255;
+			conn->buf_send[i][10] = 0;
+
 			//printf("sending after barrier, dest_qpn = %llu \n", conn->dest_qpn);
 
 			int success = conn->pp_post_send(conn->ctx, conn->dest_qpn, conn->size, i);
@@ -864,7 +901,7 @@ void* client_threadfunc(void* x) {
 		}
 		//printf("exited while loop \n");
 	}
-	*/
+	
 
 	//if(thread_num == active_thread_num - 1){
 	//	rps[thread_num] = conn->sync_iters/(usec/1000000.);
@@ -1024,7 +1061,7 @@ void* client_threadfunc(void* x) {
         ////////////////////////////////////////////////////////////////////////////////////////////////////////
         printf("Captured pkt count \n");
 		*/
-        printf("%d\n", (int)totalRPS);
+        printf("totalRPS = %d\n", (int)totalRPS);
 	}
 	
 	//printf("hello thread %llu \n",thread_num);
@@ -1045,7 +1082,7 @@ void* client_threadfunc(void* x) {
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:l:n:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:l:n:z:")) != -1)
     switch (c)
 	{
       case 'w':
@@ -1087,6 +1124,9 @@ int main(int argc, char *argv[])
 	  case 'n':
 		numberOfPriorities = atoi(optarg);
 		break;
+	  case 'z':
+		tcp_port = atoi(optarg);
+		break;
       default:
 	  	printf("Unrecognized command line argument\n");
         return 0;
@@ -1118,6 +1158,10 @@ int main(int argc, char *argv[])
 	ret2 = pthread_barrier_init(&barrier2, &attr2, 2*active_thread_num);
 
 
+	uint8_t ib_port = 1;
+	do_uc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1);
+	sleep(3);
+
   	struct thread_data tdata [connections.size()];
 	pthread_t pt[active_thread_num];
 	for(int i = 0; i < active_thread_num; i++){
@@ -1128,7 +1172,7 @@ int main(int argc, char *argv[])
 		if(i == 0) sleep(3);
 	}
 
-	my_sleep(60000000000);
+	my_sleep(10000000000);
 	terminate_load = true;
 
 	for(int i = 0; i < active_thread_num; i++){
@@ -1136,7 +1180,9 @@ int main(int argc, char *argv[])
 		assert(!ret);
 	}
 
+	printf("start allPrioCnts ... \n");
 	for(int i = 0; i < numberOfPriorities; i++){
 		printf("%d \n",allPrioCnts[i]);		
 	}		
+	printf("end allPrioCnts ... \n");
 }

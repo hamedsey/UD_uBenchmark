@@ -70,7 +70,7 @@ public:
 	unsigned int             connect_port = 18515;
 	int                      ib_port = 1;
 	uint64_t	             rx_depth = 16384;
-	unsigned int             size = 20;
+	unsigned int             size = 20;//116;//20;
 	long long int   		 iters = 1000000;
 	long long int   		 sync_iters = 100000;
 	int                      use_event = 0;
@@ -100,7 +100,7 @@ public:
 
 	int wr_id = 0;
 	bool received = false;
-	int dest_qpn;
+	uint32_t dest_qpn;
 };
 
 #endif

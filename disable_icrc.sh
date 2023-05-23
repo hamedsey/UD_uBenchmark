@@ -22,3 +22,4 @@ sudo ethtool --set-priv-flags enp24s0 sniffer on
 #sudo ip route del 192.168.1.0/255.255.255.0 dev enp24s0
 #sudo ip route add 192.168.1.5 dev enp24s0
 #sudo ethtool --set-priv-flags enp24s0 sniffer on
+~/disable-mellanox-shell-credits.sh 

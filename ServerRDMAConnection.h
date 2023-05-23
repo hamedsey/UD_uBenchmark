@@ -19,7 +19,8 @@
 #include <unistd.h>
 #include <malloc.h>
 
-#define SHARED_CQ 1
+#define SHARED_CQ 0
+//if FPGA_NOTIFICATION is 1, this should be zero
 
 using namespace std;
 
@@ -96,7 +97,7 @@ public:
 	unsigned int             connect_port = 18515;
 	int                      ib_port = 1;
 	unsigned int             rx_depth = 16384; //SCALE UP IF LOADING ONLY ONE SERVER CORE
-	unsigned int             size = 20;
+	unsigned int             size = 20;//116;//20;
 	unsigned long long int   iters = 10000000;
 	int                      use_event = 0;
 	int 					 routs = 0;

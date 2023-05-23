@@ -14,6 +14,7 @@
 #include <getopt.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include  <signal.h>
 
 #include <infiniband/verbs.h>
 #include <linux/types.h>  //for __be32 type
@@ -23,10 +24,17 @@
 #include <pthread.h> 
 #include <assert.h>
 
+
 #include <set>
 #include <list>
+#include "rdma_uc.cc"
+#include <immintrin.h>
+#include <x86intrin.h>
+#include <cstdlib>
+//#include <intrin.h>
 
 #define debug 0
+#define debugFPGA 0
 #define DRAIN_SERVER 0
 #define MEAS_TIME_ON_SERVER 0
 #define ENABLE_HT 0
@@ -37,12 +45,18 @@
 #define MEAS_POLL_LAT_INT 100000
 #define MEAS_POLL_LAT_WARMUP 10001
 
-#define PROCESS_IN_ORDER 1
+#define MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ 0
+
+#define FPGA_NOTIFICATION 1
+//if SHARED_CQ is 1, this should be zero (for strict policy)
+
+#define PROCESS_IN_ORDER 0
 #define STRICT_PRIORITY 0
 #define ROUND_ROBIN 0
 #define WEIGHTED_ROUND_ROBIN 0
 #define ASSERT 1  //should be same as REORDER pragma in client
 #define PRINT 0
+
 
 			//1000
 			//0100
@@ -64,6 +78,8 @@ set<uint16_t> skipList;
 
 uint32_t * all_rcnts;
 uint32_t * all_scnts;
+vector<RDMAConnection *> connections;
+
 
 #if COUNT_IDLE_POLLS
 	uint64_t * idlePolls;
@@ -78,13 +94,45 @@ uint32_t * all_scnts;
 #endif
 
 
-char* servername;
+char* servername = NULL; //used for UD
+char* server_name = NULL; //used for UC
+
 char *ib_devname_in;
 int gidx_in;
 int NUM_THREADS = 4;
 int NUM_QUEUES = 55;
+uint64_t tcp_port = 20001;
 
 //vector<vector<uint16_t> > indexOfNonZeroPriorities (numberOfPriorities , vector<uint16_t> (0, 0));
+
+uint64_t count64 = 0;
+uint64_t count01 = 0;
+uint64_t count11 = 0;
+uint64_t countOther = 0;
+
+void     INThandler(int);
+
+#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
+	unsigned long start_cycle = 0;
+	unsigned long end_cycle = 0; 
+	double execution_time_cycles = 0;
+	double elapsedExecutionTimeMeasurements = 0;
+#endif
+
+////////rdtsc
+
+#define TSC_FREQUENCY ((double)2.2E9) 
+inline unsigned long readTSC() { 
+	_mm_mfence(); // wait for earlier memory instructions to retire 
+	//_mm_lfence(); // block rdtsc from executing 
+	unsigned long long tsc = __rdtsc(); 
+	_mm_mfence();
+	//_mm_lfence(); // block later instructions from executing 
+	return tsc; 
+}
+
+
+/////////////
 
 
 
@@ -132,6 +180,34 @@ static void usage(const char *argv0)
 }
 */
 
+void  INThandler(int sig)
+{
+     char  c;
+
+     signal(sig, SIG_IGN);
+
+	printf("count64= %llu, countOther = %llu, count01= %llu, count11= %llu , rcnt = %llu \n", count64, countOther, count01, count11, connections[0]->rcnt);
+	#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
+		printf("avg = %f, \n ", (float(execution_time_cycles)/elapsedExecutionTimeMeasurements));
+	#endif
+	/*
+	#if COUNT_IDLE_POLLS
+		printf("printing idle polls of all threads \n");
+		double avgIdlePolls = 0.0;
+		for(unsigned int i = 0; i < NUM_THREADS; i++) {
+			printf("idle polls  = %llu \n", idlePolls[i]);
+			printf("total polls = %llu \n", totalPolls[i]);
+			printf("%f, \n ", float(idlePolls[i])/float(totalPolls[i]));
+			printf("\n");
+			avgIdlePolls += float(idlePolls[i])/float(totalPolls[i]);
+		}
+		printf("\n \n");
+		printf("avg = %f, \n ", float(avgIdlePolls)/NUM_THREADS);
+	#endif
+	*/
+	exit(0);
+}
+
 void* server_threadfunc(void* x) {
 
 	struct thread_data *tdata = (struct thread_data*) x;
@@ -155,7 +231,9 @@ void* server_threadfunc(void* x) {
         CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
     #endif
 
-	printf("T%d - qp = 0x%06x , %d \n",thread_num,conn->my_dest.qpn,conn->my_dest.qpn);
+	printf("T%d - qp = 0x%06x , %d, offset = %d \n",thread_num,conn->my_dest.qpn,conn->my_dest.qpn, offset);
+
+	if(thread_num == 0) do_uc(ib_devname_in, server_name, tcp_port, conn->ib_port, gidx_in, NUM_QUEUES);
 
 	sched_setaffinity(0, sizeof(cpuset), &cpuset);
 
@@ -215,6 +293,34 @@ void* server_threadfunc(void* x) {
 
 	uint16_t qpID = 0;
 	bool received = false;
+
+	bool isZero = true;
+
+	signal(SIGINT, INThandler);	
+
+	//__m512i zero = 0;
+	//zero = _mm512_setzero_si512();
+
+	#if FPGA_NOTIFICATION
+		//volatile __m512i** inputVector = reinterpret_cast<volatile __m512i**>(res.input512);
+		//volatile __mmask8** maskVector = reinterpret_cast<volatile __mmask8**>(res.mask512);
+		//volatile __m512i** outputVector = reinterpret_cast<volatile __m512i**>(res.output512);
+	#endif
+
+	#if FPGA_NOTIFICATION
+		uint32_t *processBufB4Polling = (uint32_t*) malloc(NUM_QUEUES*sizeof(uint32_t)); 
+		for(int q = 0; q < NUM_QUEUES; q++) {
+			//processBufB4Polling[q] = (uint32_t*) malloc(sizeof(uint32_t));
+			processBufB4Polling[q] = NULL;
+		}
+		uint32_t *processBufB4PollingSrcQP = (uint32_t*) malloc(NUM_QUEUES*sizeof(uint32_t)); 
+		for(int q = 0; q < NUM_QUEUES; q++) {
+			//processBufB4PollingSrcQP[q] = (uint32_t*) malloc(sizeof(uint32_t));
+			processBufB4PollingSrcQP[q] = NULL;
+		}
+		uint32_t connIndex = 0;		
+	#endif
+
 	while (1) {
 		#if RR
 			conn = connections[offset];
@@ -222,6 +328,153 @@ void* server_threadfunc(void* x) {
 			//offset = ((NUM_QUEUES-1) & (offset+1));	
 			if(offset == NUM_QUEUES-1) offset = 0;
 			else offset++;	
+		#endif
+	
+		struct timespec ttime,curtime;
+
+		
+		//conn = connections[0];
+
+		#if FPGA_NOTIFICATION
+			//printf("Contents of FPGA notification= %llu \n", htonll(*(res.buf)));
+			//conn = connections[NUM_QUEUES - 1 - __builtin_clzll(htonll(*(res.buf)))];
+
+			//only for debugging purposes
+			/*
+			unsigned long long tempBuf = htonll(*(res.buf));
+			while(1) 
+			{
+				if(htonll(*(res.buf)) == tempBuf) continue;
+				else {
+					tempBuf = htonll(*(res.buf));
+					printf("Contents of FPGA notification= %llu, connection index = %d \n", htonll(*(res.buf)), NUM_QUEUES - 1 - __builtin_clzll(htonll(*(res.buf))));
+					break;
+				}
+			}
+			*/
+			
+			if(*(res.buf) == 0x00) {
+				#if debugFPGA
+				printf("byte vector is 0x00 \n");
+				#endif
+				continue;
+			}
+			else {
+				//assert(*(res.buf) == 0xFF);
+				#if debugFPGA
+				printf("byte vector is %x, setting to 0x00 \n", *(res.buf));
+				#endif
+
+				*(res.buf) == 0x00;
+				connIndex = 0; //this value will change depending on leading zeros
+				conn = connections[connIndex];
+
+				if(processBufB4Polling[connIndex] != NULL && processBufB4PollingSrcQP[connIndex] != NULL) {
+					#if debugFPGA
+					printf("found work item from previous iter, process that \n");
+					#endif
+
+					bufID = (processBufB4Polling[connIndex]);
+					srcQP = (processBufB4PollingSrcQP[connIndex]);
+					received = true;
+					goto process;
+				}
+			}
+			
+
+			/*
+			//my_sleep(1,1);
+			unsigned long long tmp = __builtin_clzll(htonll(*(res.buf)) & 0x00000000000000FF);
+			//printf("FPGA notification= %x, connection index = %llu \n", tmp, tmp);
+			//printf("hi \n");
+			if(tmp == 56) {
+				count64++;
+				if(isZero) count01++;
+				else count11++;
+				isZero = false;
+				conn = connections[0];
+			}
+			else {
+				countOther++;
+				//printf("FPGA notification= %x, connection index = %llu \n", tmp, tmp);
+				continue;
+			}
+
+			if(count64 == 1) countOther = 0;
+			*/
+
+			//printf("offset = %d \n",offset);
+			//offset = ((NUM_QUEUES-1) & (offset+1));	
+			//if(offset == NUM_QUEUES-1) offset = 0;
+			//else offset++;	
+
+			#if 0
+			//use this for clz!!
+			int p = 0;
+			unsigned long start_cycle = readTSC(); 
+			unsigned long long leadingZeros = 0;
+
+			//for(p = 0; p < 4; p++) *outputVector[p] = _mm512_mask_lzcnt_epi64(*outputVector[p], *maskVector[p], *inputVector[p]);
+			//for(p = 0; p < 4; p++) *outputVector[p] = _mm512_lzcnt_epi64(*(inputVector[p]));
+			
+			//volatile __m512i s;
+			//volatile __m512i rest;
+  			//rest = _mm512_mask_lzcnt_epi64 (rest, 2, s);
+
+			// EXECUTE KERNEL 
+			for(uint64_t x = 0; x < 1000000; x++) {
+				//int random = rand() % 32; //can write a random number so branch predictor mispredicts
+				//*(res.buffers[random]) = 64;
+				bool found = false;
+				for(p = 0; p < 16; p++) {
+					
+					__asm__ __volatile__ ("lzcnt %1, %0" : "=r" (leadingZeros) : "r" (htonll(*(res.buffers[p]))):);
+					if(leadingZeros < 64) {
+						found = true;
+						//printf("inside loop p = %d, buffers[%d] = %llu , clz = %llu \n", p, p, htonll(*(res.buffers[p])), _lzcnt_u64(htonll(*(res.buffers[p]))));
+						break;
+					}
+					
+					/*
+					if(_lzcnt_u64(htonll(*(res.buffers[p]))) < 64) {
+						//printf("inside loop p = %d, buffers[%d] = %llu , clz = %llu \n", p, p, htonll(*(res.buffers[p])), _lzcnt_u64(htonll(*(res.buffers[p]))));
+						found = true;
+						break;
+					}
+					*/
+					//if(_lzcnt_u64(htonll(*(res.buffers[p]))) < 64) {
+					//__m512i zero;
+					//_mm512_lzcnt_epi64(zero);
+				}
+				if(found == false) {
+					for(p = 16; p < 32; p++) {
+						
+						__asm__ __volatile__ ("lzcnt %1, %0" : "=r" (leadingZeros) : "r" (htonll(*(res.buffers[p]))):);
+						if(leadingZeros < 64) {
+							//printf("inside loop p = %d, buffers[%d] = %llu , clz = %llu \n", p, p, htonll(*(res.buffers[p])), _lzcnt_u64(htonll(*(res.buffers[p]))));
+							break;
+						}
+						
+						/*
+						if(_lzcnt_u64(htonll(*(res.buffers[p]))) < 64) {
+							//printf("inside loop p = %d, buffers[%d] = %llu , clz = %llu \n", p, p, htonll(*(res.buffers[p])), _lzcnt_u64(htonll(*(res.buffers[p]))));
+							break;
+						}
+						*/
+						//if(_lzcnt_u64(htonll(*(res.buffers[p]))) < 64) {
+						//__m512i zero;
+						//_mm512_lzcnt_epi64(zero);
+					}
+				}
+				//*(res.buffers[random]) = 0;
+			}
+
+			//printf("outside loop p = %d \n", p);
+			unsigned long end_cycle = readTSC(); 
+			//double execution_time_seconds = ((double) (end_cycle-start_cycle)) / TSC_FREQUENCY;
+			printf("clz elapsed = %f , p = %llu \n", (double) (end_cycle-start_cycle)/1000000, p);
+			#endif
+
 		#endif
 
 		#if SHARED_CQ
@@ -256,12 +509,21 @@ void* server_threadfunc(void* x) {
 					clock_gettime(CLOCK_MONOTONIC,&beginPoll);
 				#endif
 
+				//unsigned long start_cycle = readTSC(); 
+				//for(uint64_t x = 0; x < 1000000; x++) {
+
 				#if SHARED_CQ
 					ne = ibv_poll_cq(ctxGlobal->cq, num_bufs*2 , wc);
 				#else 
+					#if debugFPGA
+					printf("poll (1) \n");
+					#endif
 					ne = ibv_poll_cq(conn->ctx->cq, 1 , wc);
 				#endif
-				
+				//}
+				//unsigned long end_cycle = readTSC(); 
+				//printf("clz elapsed = %f \n", (double) (end_cycle-start_cycle)/1000000);
+
 				//printf("polled ne = %d \n",ne);
 
 				#if MEAS_POLL_LAT
@@ -284,11 +546,14 @@ void* server_threadfunc(void* x) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
 				}
 
-				#if !SHARED_CQ
+				//#if !SHARED_CQ && FPGA_NOTIFICATION
 					if (ne == 0) {
+						#if debugFPGA
+						printf("no work item in poll (1) \n");
+						#endif
 						continue;
 					}
-				#endif
+				//#endif
 
 				//if(totalPolls[thread_num] ==  0xFFFFFFFFFFFFFFFF) totalPollMSBs[thread_num]++;
 				//else 
@@ -296,24 +561,29 @@ void* server_threadfunc(void* x) {
 					if(receivedFirstOne == false) {
 						if(ne > 0) {
 							receivedFirstOne = true;	
+							totalPolls[thread_num] = 0;
+							idlePolls[thread_num] = 0;
 						}
 					}
 					else {
 						totalPolls[thread_num]++;
 
 						if(ne == 0) {
-							//if(idlePolls[thread_num] == 0xFFFFFFFFFFFFFFFF) idlePollMSBs[thread_num]++;
+							if(idlePolls[thread_num] == 0xFFFFFFFFFFFFFFFF) printf("idle wrapped\n"); //idlePolls[thread_num]++;
 							//else 
 							idlePolls[thread_num]++;
 						}
 					}
+					//printf("idle  = %llu \n", idlePolls[thread_num]);
 
 				#endif
 
 			//} while (!conn->use_event && ne < 1);
 		#endif
 
-
+		#if debugFPGA
+		printf("found work item in poll (1) \n");
+		#endif
         for (i = 0; i < ne; ++i) {
             if (wc[i].status != IBV_WC_SUCCESS) {
                 fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
@@ -373,6 +643,14 @@ void* server_threadfunc(void* x) {
 					bufID = a;
 					srcQP = wc[i].src_qp;
 					received = true;
+
+					#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
+						end_cycle = readTSC(); 
+						if(start_cycle != 0) {
+							execution_time_cycles = ((double) (end_cycle-start_cycle));
+							elapsedExecutionTimeMeasurements++;
+						}
+					#endif
 				#endif
 
                 break;
@@ -382,6 +660,8 @@ void* server_threadfunc(void* x) {
 	//#if PROCESS_IN_ORDER
 	//	while(!skipList.empty() && skipList.size() != 0) {
 	//#else
+
+process:
 
 #if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY
 	if(!skipList.empty() && skipList.size() != 0) {
@@ -644,7 +924,7 @@ void* server_threadfunc(void* x) {
             #endif
 
             #if debug
-                printf("T%d - recv complete, a = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
+                printf("T%d - recv complete, bufID = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,bufID,rcnt,scnt,conn->routs,conn->souts);
             #endif
             
             uint8_t sleep_int_lower = (uint)buf_recv[bufID-num_bufs][41];
@@ -740,6 +1020,10 @@ void* server_threadfunc(void* x) {
                 }
                 //}
             #endif
+					
+			#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
+				start_cycle = readTSC(); 
+			#endif
         }
 		#if ROUND_ROBIN
 			//priority++;
@@ -755,11 +1039,99 @@ void* server_threadfunc(void* x) {
 			//}
 		#endif
 
+		#if FPGA_NOTIFICATION
+			#if debugFPGA
+			printf("poll (2) \n");
+			#endif
+			bool foundRecv = false;
+			for(int iter = 0; iter < 2; iter++) {
+				if(foundRecv == true) break;
+				ne = ibv_poll_cq(conn->ctx->cq, 1 , wc);
+
+				if (ne < 0) {
+					fprintf(stderr, "poll CQ failed %d\n", ne);
+				}
+
+				if (ne > 0) {
+					#if debugFPGA
+					printf("found work item in poll (2) , setting vector to 0xFF \n");
+					#endif
+					//isZero = true;
+					//continue;
+
+					for (i = 0; i < ne; ++i) {
+						if (wc[i].status != IBV_WC_SUCCESS) {
+							fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+								ibv_wc_status_str(wc[i].status),
+								wc[i].status, (int) wc[i].wr_id);
+						}
+					
+						uint16_t a = (int) wc[i].wr_id;
+
+						switch (a) {
+						case 0 ... num_bufs-1:
+
+							qpID = a/bufsPerQP;
+							conn = connections[qpID];
+
+							conn->scnt++;
+							++scnt;
+							--conn->souts;
+
+							#if debugFPGA
+							printf("found send completion in completion queue \n");
+							#endif
+
+							#if debug
+								printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
+							#endif
+
+							break;
+						case num_bufs ... (2*num_bufs)-1:
+							#if MEAS_TIME_ON_SERVER
+								clock_gettime(CLOCK_MONOTONIC, &requestStart);
+							#endif
+
+							#if !SHARED_CQ
+								#if debugFPGA
+								printf("b4 setting work item metadata for next iter \n");
+								#endif
+								*(res.buf) = 0xFF; //htonll(0x0000000000000000);
+
+								(processBufB4Polling[connIndex]) = a;
+								(processBufB4PollingSrcQP[connIndex]) = wc[i].src_qp;
+								#if debugFPGA
+								printf("after setting work item metadata for next iter \n");
+								#endif
+
+								foundRecv = true;
+							#endif
+
+							break;
+						}
+					}
+				}
+				else {
+					#if debugFPGA
+					printf("no work item in poll (2) \n");
+					#endif
+					processBufB4Polling[connIndex] = NULL;
+					processBufB4PollingSrcQP[connIndex] = NULL;
+					break;
+				}
+			}
+		#endif
+
+
+
+
+
 ///////////////////////////
 		//printf("size of vector indexOfNonZeroPriorities is: %d \n", indexOfNonZeroPriorities.size());
 #if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY || PROCESS_IN_ORDER || !SHARED_CQ
 	}
 #endif
+//end of while(1) loop
 
 	if (gettimeofday(&conn->end, NULL)) {
 		perror("gettimeofday");
@@ -822,6 +1194,7 @@ void* server_threadfunc(void* x) {
 
 
 
+
 	if (scnt != rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
 
         all_rcnts[thread_num] = rcnt;
@@ -841,7 +1214,7 @@ int main(int argc, char *argv[])
 {
 	
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:n:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:n:z:")) != -1)
     switch (c)
 	{
       case 't':
@@ -861,6 +1234,9 @@ int main(int argc, char *argv[])
 		break;
 	  case 'n':
 	  	numberOfPriorities = atoi(optarg);
+		break;
+	  case 'z':
+		tcp_port = atoi(optarg);
 		break;
       default:
 	  	printf("Unrecognized command line argument\n");
@@ -930,7 +1306,6 @@ int main(int argc, char *argv[])
 	metaCQ.resize(numberOfPriorities , list<recvReq>(0,{0,0}));
 	bufsPerQP = recv_bufs_num/NUM_QUEUES;
 
-	vector<RDMAConnection *> connections;
 	for (uint i = 0; i < NUM_QUEUES; i++) {
 		//if(i > 500) { 
 		//printf("before creating connection i = %lu \n",i);
@@ -961,7 +1336,9 @@ int main(int argc, char *argv[])
 		tdata[i].id = i;
 		int ret = pthread_create(&pt[i], NULL, server_threadfunc, &tdata[i]);
 		assert(ret == 0);
-		if(i == 0) sleep(1);
+		if(i == 0) {
+			sleep(1);
+		}
 	}
 
 	for(int i = 0; i < NUM_THREADS; i++){
