@@ -33,13 +33,20 @@
 #include <cstdlib>
 //#include <intrin.h>
 
+#include <iostream>
+//using namespace std;
+
 #define debug 0
 #define debugFPGA 0
 #define DRAIN_SERVER 0
 #define MEAS_TIME_ON_SERVER 0
 #define ENABLE_HT 0
 #define ENABLE_SERV_TIME 1
-#define RR 0
+
+#define RR_POLL 0
+#define WRR_POLL 0
+#define STRICT_POLL 0
+
 #define COUNT_IDLE_POLLS 0
 #define MEAS_POLL_LAT 0
 #define MEAS_POLL_LAT_INT 100000
@@ -47,15 +54,17 @@
 
 #define MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ 0
 
-#define FPGA_NOTIFICATION 1
+#define FPGA_NOTIFICATION 0
 //if SHARED_CQ is 1, this should be zero (for strict policy)
 
 #define PROCESS_IN_ORDER 0
 #define STRICT_PRIORITY 0
 #define ROUND_ROBIN 0
 #define WEIGHTED_ROUND_ROBIN 0
-#define ASSERT 1  //should be same as REORDER pragma in client
+#define ASSERT 0  //should be same as REORDER pragma in client //disable if using SRQ (shared receive queue)
 #define PRINT 0
+
+#define IDEAL 1
 
 
 			//1000
@@ -102,6 +111,7 @@ int gidx_in;
 int NUM_THREADS = 4;
 int NUM_QUEUES = 55;
 uint64_t tcp_port = 20001;
+uint64_t buffersPerQ = 100;
 
 //vector<vector<uint16_t> > indexOfNonZeroPriorities (numberOfPriorities , vector<uint16_t> (0, 0));
 
@@ -109,6 +119,7 @@ uint64_t count64 = 0;
 uint64_t count01 = 0;
 uint64_t count11 = 0;
 uint64_t countOther = 0;
+uint64_t idlePolls = 0;
 
 void     INThandler(int);
 
@@ -187,6 +198,7 @@ void  INThandler(int sig)
      signal(sig, SIG_IGN);
 
 	printf("count64= %llu, countOther = %llu, count01= %llu, count11= %llu , rcnt = %llu \n", count64, countOther, count01, count11, connections[0]->rcnt);
+	printf("idle polls = %llu \n", idlePolls);
 	#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
 		printf("avg = %f, \n ", (float(execution_time_cycles)/elapsedExecutionTimeMeasurements));
 	#endif
@@ -220,7 +232,6 @@ void* server_threadfunc(void* x) {
 
 	//conn = new RDMAConnection(tdata->id, ib_devname_in, gidx_in ,servername);
 
-
 	cpu_set_t cpuset;
     CPU_ZERO(&cpuset);       //clears the cpuset
 
@@ -237,7 +248,7 @@ void* server_threadfunc(void* x) {
 
 	sched_setaffinity(0, sizeof(cpuset), &cpuset);
 
-	const int num_bufs = recv_bufs_num;
+	int num_bufs = recv_bufs_num;
 
 	if (gettimeofday(&conn->start, NULL)) {
 		perror("gettimeofday");
@@ -257,7 +268,9 @@ void* server_threadfunc(void* x) {
 		double pollTime = 0.0;
 	#endif
 
-	uint16_t signalInterval = conn->rx_depth-recv_bufs_num;
+	uint16_t signalInterval = (conn->rx_depth-recv_bufs_num)/2;
+	if(recv_bufs_num > conn->rx_depth) signalInterval = (recv_bufs_num-conn->rx_depth)/2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ;
+	printf("signalInterval = %llu, rx_depth = %llu, recvbufsnum = %llu, num_bufs = %llu \n",signalInterval, conn->rx_depth, recv_bufs_num, num_bufs);
 	int16_t priority = -1;
 	uint64_t bufID;
 	uint64_t srcQP;
@@ -295,6 +308,9 @@ void* server_threadfunc(void* x) {
 	bool received = false;
 
 	bool isZero = true;
+	uint64_t i = 0;
+	uint64_t j = 0;
+	uint64_t a = 0;
 
 	signal(SIGINT, INThandler);	
 
@@ -319,15 +335,29 @@ void* server_threadfunc(void* x) {
 			processBufB4PollingSrcQP[q] = NULL;
 		}
 		uint32_t connIndex = 0;		
+		unsigned long long leadingZeros = 0;
+		alignas(64) uint64_t result[8] = {0,0,0,0,0,0,0,0};
+		uint8_t sequenceNumberInBV;
+		bool need2PollAgain = false;
+
+		__m512i sixtyfour = _mm512_setr_epi64(64, 64, 64, 64, 64, 64, 64, 64);
+		uint64_t log2;
+		uint64_t value;
+		uint64_t byteOffset;
+		uint64_t leadingZerosinValue;
+		uint8_t resultIndexWorkFound;
 	#endif
 
 	while (1) {
-		#if RR
+		#if RR_POLL
 			conn = connections[offset];
 			//printf("offset = %d \n",offset);
 			//offset = ((NUM_QUEUES-1) & (offset+1));	
 			if(offset == NUM_QUEUES-1) offset = 0;
 			else offset++;	
+		#endif
+		#if STRICT_POLL
+			conn = connections[offset];
 		#endif
 	
 		struct timespec ttime,curtime;
@@ -336,6 +366,8 @@ void* server_threadfunc(void* x) {
 		//conn = connections[0];
 
 		#if FPGA_NOTIFICATION
+			bool foundWork = false;
+
 			//printf("Contents of FPGA notification= %llu \n", htonll(*(res.buf)));
 			//conn = connections[NUM_QUEUES - 1 - __builtin_clzll(htonll(*(res.buf)))];
 
@@ -353,6 +385,8 @@ void* server_threadfunc(void* x) {
 			}
 			*/
 			
+			/////////////////////////////////Single Queue//////////////////////////////////////////////
+			#if 0
 			if(*(res.buf) == 0x00) {
 				#if debugFPGA
 				printf("byte vector is 0x00 \n");
@@ -360,6 +394,7 @@ void* server_threadfunc(void* x) {
 				continue;
 			}
 			else {
+
 				//assert(*(res.buf) == 0xFF);
 				#if debugFPGA
 				printf("byte vector is %x, setting to 0x00 \n", *(res.buf));
@@ -380,6 +415,328 @@ void* server_threadfunc(void* x) {
 					goto process;
 				}
 			}
+			#endif
+			/////////////////////////////////////////////////////////////////////////////////////////
+
+			////////////////////////////////Measuring Latency////////////////////////////////////////
+			#if 0
+			unsigned long start_cycle = readTSC(); 
+
+			for(uint64_t x = 0; x < 1000000; x++) {
+				bool foundWork = false;
+
+				#if 0
+				//2-3 cycles (0), 80 cycles (255)
+				for (uint64_t i = 0; i < NUM_QUEUES; i += 8) {
+					unsigned long long value = htonll(*reinterpret_cast<volatile unsigned long long*>(res.buf + i));
+					__asm__ __volatile__ ("lzcnt %1, %0" : "=r" (leadingZeros) : "r" (value):);
+					#if debugFPGA
+					printf("leading count = %llu, value = %llu \n", leadingZeros, value);
+					for(uint64_t y = 0; y < 8 ; y++) {
+						printf("%x  ", (res.buf)[y]);
+					}
+					printf("\n \n");
+					#endif
+
+					//printf("connIndex = %llu \n", connIndex);
+
+					if(leadingZeros != 64) {
+						connIndex = i + (leadingZeros/8); //this value will change depending on leading zeros
+						foundWork = true;
+						break;
+					}
+				}
+				#endif
+
+				#if 1
+				//6 cycles (0), 50 cycles (255)
+				for (uint64_t i = 0; i < NUM_QUEUES; i += 64) {
+					// Load 64 bytes (512 bits) from the input array
+					//__m512i values = _mm512_loadu_si512(reinterpret_cast<__m512i*>(res.buf + i));
+
+					//printf("i = %llu \n", i);
+					volatile __m512i values = _mm512_loadu_si512((const void *)(reinterpret_cast<volatile __m512i*>(res.buf + i)));
+					//volatile __m512i values = (reinterpret_cast<volatile __m512i*>(res.buf + i));
+
+					//__m512i networkVector = convert_to_network_byte_order(values);
+
+					//__m512i values = _mm512_set_epi64(128, 64, 32, 16, 8, 4, 2, 1);
+					// Convert the loaded bytes to 32-bit integers
+					//__m512i wideValues = _mm512_cvtepi8_epi64(values);
+
+					// Perform the leading zero operation on the wide values
+					__m512i leadingZeros = _mm512_lzcnt_epi64(values);
+
+					// Store the leading zeros count in an array for printing
+					_mm512_store_si512(reinterpret_cast<__m512i*>(result), leadingZeros);
+
+					// Print the leading zeros count for each 32-bit integer
+
+					#if 0
+					std::cout << "Leading Zeros 1: ";
+					for (int j = 0; j < 8; ++j) {
+						std::cout << result[j] << " ";
+					}
+					std::cout << std::endl;
+					#endif
+					
+					for (uint8_t j = 0; j < 8; j++) {
+						if(result[j] != 64) {
+							foundWork = true;
+							//resultIndexWorkFound = ;
+							connIndex = i + (8*j) + (result[j]/8);
+
+							//printf("found work... i = %llu j = %llu, connIndex = %llu \n", i, j, connIndex);
+							break;
+						}
+
+					}
+					if (foundWork == true) break;
+					//0x0000000000000000 leading zeros = 64
+					//0xFFFFFFFFFFFFFFFF leading zeros = 0
+					//0x0000000000000000 leading zeros = 64
+					//0xFFFFFFFFFFFFFFFF leading zeros = 0
+				}
+				#endif
+			}
+
+			unsigned long end_cycle = readTSC(); 
+			//double execution_time_seconds = ((double) (end_cycle-start_cycle)) / TSC_FREQUENCY;
+			printf("clz elapsed = %f , connIndex = %llu \n", (double) (end_cycle-start_cycle)/1000000, connIndex);
+			#endif
+			//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+			/////////////////////////////////Multi Queue - lzcnt //////////////////////////////////////////////
+			#if 1
+			uint32_t byteFlipMask = 0x00000000;
+			for (i = 0; i < NUM_QUEUES; i += 8) {
+
+				unsigned long long value = htonll(*reinterpret_cast<volatile unsigned long long*>(res.buf + i));
+				__asm__ __volatile__ ("lzcnt %1, %0" : "=r" (leadingZeros) : "r" (value):);
+				#if debugFPGA
+				printf("leading count = %llu, value = %llu \n", leadingZeros, value);
+				for(uint64_t y = 0; y < 8 ; y++) {
+					printf("%x  ", (res.buf)[y]);
+				}
+				printf("\n \n");
+				#endif
+
+				//printf("leading count = %llu, value = %llu \n", leadingZeros, value);
+				//for(uint64_t y = 0; y < 64 ; y++) {
+				//	if((res.buf)[y] != 0x00) printf("y = %d,  %x  ", y, (res.buf)[y]);
+				//}
+				//printf("\n \n");
+				//printf("connIndex = %llu \n", connIndex);
+
+				if(leadingZeros != 64) {
+					//printf("leading zeros is not 64! \n");
+					connIndex = i + (leadingZeros >> 3); //this value will change depending on leading zeros
+					foundWork = true;
+					//usleep(100);
+					conn = connections[connIndex];
+					sequenceNumberInBV = (res.buf)[connIndex];
+					(res.buf)[connIndex] = 0x00;
+					if(processBufB4Polling[connIndex] != NULL && processBufB4PollingSrcQP[connIndex] != NULL) {
+						#if debugFPGA
+						printf("found work item from previous iter, process that \n");
+						#endif
+
+						bufID = (processBufB4Polling[connIndex]);
+						srcQP = (processBufB4PollingSrcQP[connIndex]);
+						received = true;
+						//printf("idle polls = %llu , rcnt = %llu \n", idlePolls, connections[0]->rcnt);
+						goto process;
+					}
+					break;
+				}
+			}
+			if(foundWork == false) continue;
+			//else {
+
+			//}
+			#endif
+			//////////////////////////////////////////AVX////////////////////////////////////////////////
+			//the work item goes to queue n
+			//the notification goes to byte n ^ 7
+			#if 0
+			#if debugFPGA
+			for (int j = 0; j < 64; ++j) {
+				//array[j] = 0x01;
+				printf("%x ",res.buf[j]);
+			}
+			printf("\n");
+			#endif
+			uint32_t byteFlipMask = 0x00000007;
+			uint8_t resultIndexWorkFound = 0;
+			//for (int zz = 0; zz < 10; zz++) {
+			for (i = 0; i < NUM_QUEUES; i += 64) {
+				resultIndexWorkFound = 0;
+				// Load 64 bytes (512 bits) from the input array
+				//__m512i values = _mm512_loadu_si512(reinterpret_cast<__m512i*>(res.buf + i));
+
+				#if debugFPGA
+				printf("before load \n");
+				#endif
+				volatile __m512i values = _mm512_loadu_si512((const void *)(reinterpret_cast<volatile __m512i*>(res.buf + i)));
+				//volatile __m512i values = (reinterpret_cast<volatile __m512i*>(res.buf + i));
+
+				// Perform the leading zero operation on the wide values
+				#if debugFPGA
+				printf("before lzcnt \n");
+				#endif
+	
+				__m512i leadingZeros = _mm512_lzcnt_epi64(values);
+
+				#if debugFPGA
+				printf("before store \n");
+				#endif
+
+				// Store the leading zeros count in an array for printing
+				_mm512_store_si512(reinterpret_cast<__m512i*>(result), leadingZeros);
+
+				// Print the leading zeros count for each 32-bit integer
+				#if debugFPGA
+				std::cout << "Leading Zeros 1: ";
+				for (int j = 0; j < 8; ++j) {
+					std::cout << result[j] << " ";
+				}
+				std::cout << std::endl;
+				#endif
+
+				for (j = 0; j < 8; j++) {
+					if(result[j] != 64) {
+						foundWork = true;
+						resultIndexWorkFound = result[j];
+						connIndex = i + (8*j) + (resultIndexWorkFound/8);
+						//printf("connIndex = %llu \n", connIndex);
+						#if debugFPGA
+						printf("found work... i = %llu j = %llu, result[j] = %llu \n", i, j, resultIndexWorkFound);
+						#endif
+	
+						#if debugFPGA
+						printf("connIndex = %llu \n", connIndex);
+						#endif
+
+						conn = connections[connIndex];
+						//printf(" - buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+						(res.buf)[connIndex^byteFlipMask] = 0x00;
+						if(processBufB4Polling[connIndex] != NULL && processBufB4PollingSrcQP[connIndex] != NULL) {
+							#if debugFPGA
+							printf("found work item from previous iter, process that \n");
+							#endif
+
+							bufID = (processBufB4Polling[connIndex]);
+							srcQP = (processBufB4PollingSrcQP[connIndex]);
+							received = true;
+							//printf("going straight to process \n");
+							goto process;
+						}
+						//else printf("going to poll queue \n");
+						break;
+					}
+
+				}
+				if (foundWork == true) break;
+				//0x0000000000000000 leading zeros = 64
+				//0xFFFFFFFFFFFFFFFF leading zeros = 0
+				//0x0000000000000000 leading zeros = 64
+				//0xFFFFFFFFFFFFFFFF leading zeros = 0
+			}
+			//}
+			if (foundWork == false) continue;
+			//else {
+			//}
+			//printf(" - buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+			#endif
+			////////////////////////////////////////////////////////////////////////////////////////////
+			/////////////////////////////////////////////////////////////////////////////////////////////
+			////////////////////////////////////AVX-Optimized////////////////////////////////////////////
+			#if 0
+			uint32_t byteFlipMask = 0x00000007;
+			uint8_t resultIndexWorkFound = 0;
+			//for (int zz = 0; zz < 10; zz++) {
+			for (i = 0; i < NUM_QUEUES; i += 64) {
+				resultIndexWorkFound = 0;
+				// Load 64 bytes (512 bits) from the input array
+	
+				volatile __m512i values = _mm512_loadu_si512((const void *)(reinterpret_cast<volatile __m512i*>(res.buf + i)));
+
+				// Perform the leading zero operation on the wide values
+				__m512i leadingZeros = _mm512_lzcnt_epi64(values);
+
+				// Store the leading zeros count in an array for printing
+				//_mm512_store_si512(reinterpret_cast<__m512i*>(result), leadingZeros);
+
+				__mmask8 mask = _mm512_cmpneq_epu64_mask(leadingZeros, sixtyfour);
+
+				if(mask == 0) continue;
+				else {
+
+					// BSR instruction to find MSB position
+					__asm__ __volatile__ ("bsr %1, %0" : "=r" (log2) : "r" (uint64_t(mask)));
+
+
+						//connIndex = i + (8*j) + (result[j]/8);
+						//conn = connections[connIndex];
+						//(buf)[connIndex^byteFlipMask];
+
+
+					value = *(volatile uint64_t*)(res.buf+i+(log2*8));
+					byteOffset = i+(log2 << 3);
+
+					//one way (27 cycles for 255, 13 cycles for 0)
+					__asm__ __volatile__ ("lzcnt %1, %0" : "=r" (leadingZerosinValue) : "r" (value):);
+					connIndex = (byteOffset + ((leadingZerosinValue) >> 3));
+					//printf("i = %llu, mask = %llu, log2 = %llu, offset = %llu, value = %llu, leadingZeros = %llu, connIndex = %llu \n", i, uint8_t(mask), log2, byteOffset , value, leadingZerosinValue, connIndex);
+					//for(int i = 0; i < 8; i++) printf("  %x  ", res.buf[i]);
+					//printf("\n");
+					//another way (40 cycles for 255, 13 cycles for 0) --this is slower
+					//connIndex = (offset + ((leadingZeros[log2]) >> 3)) ^ 7;
+					//printf("i = %llu, mask = %llu, log2 = %llu, offset = %llu, value = %llu, leadingZeros = %llu, connIndex = %llu \n", i, uint8_t(mask), log2, offset , value, leadingZeros[log2], connIndex);
+					foundWork = true;
+
+					#if debugFPGA
+					printf("connIndex = %llu \n", connIndex);
+					#endif
+
+					conn = connections[connIndex];
+					//printf(" - buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+					(res.buf)[connIndex^byteFlipMask] = 0x00;
+					if(processBufB4Polling[connIndex] != NULL && processBufB4PollingSrcQP[connIndex] != NULL) {
+						#if debugFPGA
+						printf("found work item from previous iter, process that \n");
+						#endif
+
+						bufID = (processBufB4Polling[connIndex]);
+						srcQP = (processBufB4PollingSrcQP[connIndex]);
+						received = true;
+						//printf("going straight to process \n");
+						goto process;
+					}
+					//else printf("going to poll queue \n");
+
+					break;
+				}
+				//0x0000000000000000 leading zeros = 64
+				//0xFFFFFFFFFFFFFFFF leading zeros = 0
+				//0x0000000000000000 leading zeros = 64
+				//0xFFFFFFFFFFFFFFFF leading zeros = 0
+			}
+			//}
+			if (foundWork == false) continue;
+			//else {
+			//}
+			#endif
+			/////////////////////////////////////////////////////////////////////////////////////////////
+
+			
+			//if(leadingZeros < 64) {
+			//	printf("%llu , clz = %llu \n", p, p, htonll(*(res.buffers[p])), _lzcnt_u64(htonll(*(res.buffers[p]))));
+			//	break;
+			//}
+			//printf("\n\n");
+			/////////////////////////////////////////////////////////////////////////////////////////
 			
 
 			/*
@@ -477,13 +834,18 @@ void* server_threadfunc(void* x) {
 
 		#endif
 
-		#if SHARED_CQ
+		#if SHARED_CQ && !IDEAL
 			struct ibv_wc wc[num_bufs*2];
 		#else
 			struct ibv_wc wc[1];
 		#endif
 		
-		int ne, i, j, prio;
+		int ne, prio;
+		i = 0; j = 0;
+		
+		#if FPGA_NOTIFICATION
+		while(received == false) {
+		#endif
 
 		#if DRAIN_SERVER
 			uint64_t empty_cnt = 0;
@@ -512,7 +874,10 @@ void* server_threadfunc(void* x) {
 				//unsigned long start_cycle = readTSC(); 
 				//for(uint64_t x = 0; x < 1000000; x++) {
 
-				#if SHARED_CQ
+				#if SHARED_CQ && IDEAL
+					ne = ibv_poll_cq(ctxGlobal->cq, 1 , wc);
+					if(ne == 0) continue;
+				#elif SHARED_CQ
 					ne = ibv_poll_cq(ctxGlobal->cq, num_bufs*2 , wc);
 				#else 
 					#if debugFPGA
@@ -542,18 +907,45 @@ void* server_threadfunc(void* x) {
 					}
 				#endif	
 
+				#if !SHARED_CQ && FPGA_NOTIFICATION
+				if (ne == 0) {
+					#if debugFPGA
+					printf("EMPTY POLL! \n");
+					printf("buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+					std::cout << "Leading Zeros 2: ";
+					for (int j = 0; j < 8; ++j) {
+						std::cout << result[j] << " ";
+					}
+					std::cout << std::endl;
+					printf("no work item in poll (1), connIndex = %llu \n", connIndex);
+					printf("buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+					std::cout << "Leading Zeros 3: ";
+					for (int j = 0; j < 8; ++j) {
+						std::cout << result[j] << " ";
+					}
+					std::cout << std::endl << std::endl;
+					#endif
+					//printf("Idle Poll!, sequence number in BV = %lu \n", sequenceNumberInBV);
+					//idlePolls++;
+					//printf("rcnt = %llu, scnt = %llu \n", conn->rcnt, conn->scnt);
+
+					continue;
+				}
+				#endif
+
+				#if !SHARED_CQ
+				if(ne == 0) {
+					#if STRICT_POLL
+						if(offset == NUM_QUEUES-1) offset = 0;
+						else offset++;	
+					#endif
+					continue;
+				}
+				#endif
+
 				if (ne < 0) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
 				}
-
-				//#if !SHARED_CQ && FPGA_NOTIFICATION
-					if (ne == 0) {
-						#if debugFPGA
-						printf("no work item in poll (1) \n");
-						#endif
-						continue;
-					}
-				//#endif
 
 				//if(totalPolls[thread_num] ==  0xFFFFFFFFFFFFFFFF) totalPollMSBs[thread_num]++;
 				//else 
@@ -585,16 +977,18 @@ void* server_threadfunc(void* x) {
 		printf("found work item in poll (1) \n");
 		#endif
         for (i = 0; i < ne; ++i) {
+			//i = 0;
             if (wc[i].status != IBV_WC_SUCCESS) {
-                fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+                fprintf(stderr, "2 Failed status %s (%d) for wr_id %d\n",
                     ibv_wc_status_str(wc[i].status),
                     wc[i].status, (int) wc[i].wr_id);
             }
         
-            uint16_t a = (int) wc[i].wr_id;
+            a = (int) wc[i].wr_id;
 
-            switch (a) {
-            case 0 ... num_bufs-1:
+			if(a >= 0 && a < num_bufs) {
+            //switch (a) {
+            //case 0 ... num_bufs-1:
 
 				qpID = a/bufsPerQP;
 				conn = connections[qpID];
@@ -606,9 +1000,11 @@ void* server_threadfunc(void* x) {
                 #if debug
                     printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
                 #endif
-
-                break;
-            case num_bufs ... (2*num_bufs)-1:
+				//continue;
+                //break;
+			}
+			else {
+            //case num_bufs ... (2*num_bufs)-1:
                 #if MEAS_TIME_ON_SERVER
                     clock_gettime(CLOCK_MONOTONIC, &requestStart);
                 #endif
@@ -632,7 +1028,10 @@ void* server_threadfunc(void* x) {
 				#if PROCESS_IN_ORDER
 					//inOrderArrivals.emplace_back(x);
 
-					if(head == tail && size == recv_bufs_num) continue;
+					if(head == tail && size == recv_bufs_num) {
+						printf("queue is full \n");
+						continue;
+					}
 					else if(head == recv_bufs_num-1) head = 0;
 					else head++;
 					inOrderArrivals[head] = x;
@@ -644,6 +1043,10 @@ void* server_threadfunc(void* x) {
 					srcQP = wc[i].src_qp;
 					received = true;
 
+					#if STRICT_POLL
+						offset = 0;
+					#endif	
+
 					#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
 						end_cycle = readTSC(); 
 						if(start_cycle != 0) {
@@ -653,16 +1056,26 @@ void* server_threadfunc(void* x) {
 					#endif
 				#endif
 
-                break;
-            }
+				#if SHARED_CQ && IDEAL
+					bufID = a;
+					srcQP = wc[i].src_qp;
+				#endif
+                //break;
+            
+		#if !IDEAL
+			}
         }
+		#endif
+	#if FPGA_NOTIFICATION
+	}
+	#endif
 		//poll n process 1, poll n
 	//#if PROCESS_IN_ORDER
 	//	while(!skipList.empty() && skipList.size() != 0) {
 	//#else
 
 process:
-
+//printf("at process \n");
 #if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY
 	if(!skipList.empty() && skipList.size() != 0) {
 #elif PROCESS_IN_ORDER
@@ -682,7 +1095,7 @@ process:
 			srcQP = tmp.srcQP;
 			metaCQ[priority].pop_front();
 			if(metaCQ[priority].size() == 0) skipList.erase(iter); //skipList.erase(priority);
-			//assert(priority == (uint)conn->buf_recv[bufID-num_bufs][50]);
+			//assert(priority == (uint)buf_recv[bufID-num_bufs][50]);
 		#endif
 
 		#if ROUND_ROBIN && !PROCESS_IN_ORDER
@@ -907,7 +1320,9 @@ process:
 					printf("\n");
 				}
 				*/
-				assert(((bufID-num_bufs)/bufsPerQP) == ((uint8_t)buf_recv[bufID-num_bufs][50]));
+				//printf("bufID = %llu \n", bufID);
+				//printf("calculated prio = %llu, buffer prio = %llu \n",((bufID-num_bufs)/bufsPerQP),((uint)buf_recv[bufID-num_bufs][50]));
+				assert(((uint8_t)((bufID-num_bufs)/bufsPerQP)) == ((uint8_t)buf_recv[bufID-num_bufs][50]));
 			#endif
 
 			#if SHARED_CQ
@@ -927,11 +1342,18 @@ process:
                 printf("T%d - recv complete, bufID = %d, rcnt = %d , scnt = %d, routs = %d, souts = %d \n",thread_num,bufID,rcnt,scnt,conn->routs,conn->souts);
             #endif
             
+			#if FPGA_NOTIFICATION
+				//assert(connIndex == 0);
+				//uint8_t sequence_number = (uint)buf_recv[bufID-num_bufs][42];
+				//assert(sequenceNumberInBV == sequence_number);
+				//printf("packet sequence number = %lu , sequence number in BV = %lu \n", sequence_number, sequenceNumberInBV);
+			#endif
+
             uint8_t sleep_int_lower = (uint)buf_recv[bufID-num_bufs][41];
             uint8_t sleep_int_upper = (uint)buf_recv[bufID-num_bufs][40];	
 
-            uint8_t checkByte2 = (uint)buf_recv[bufID-num_bufs][42];	
-            uint8_t checkByte3 = (uint)buf_recv[bufID-num_bufs][43];	
+            //uint8_t checkByte2 = (uint)buf_recv[bufID-num_bufs][42];	
+            //uint8_t checkByte3 = (uint)buf_recv[bufID-num_bufs][43];	
 
             #if ENABLE_SERV_TIME
                 //if (sleep_int_upper<0) sleep_int_upper+= 256;
@@ -949,11 +1371,13 @@ process:
 				
 				//counting number of notifications from the FPGA
 				//if((uint)buf_recv[bufID-num_bufs][53] == 153) notifCount++;
-                
-				for(int q = 0; q <= 18; q++) {
+                //if((uint)buf_recv[bufID-num_bufs][50] == 1) printf(" %x ", (uint)buf_recv[bufID-num_bufs][50]);
+
+				memcpy(buf_send[bufID-num_bufs],buf_recv[bufID-num_bufs]+40,18);
+				//for(int q = 0; q <= 18; q++) {
 					//printf(" %x ", (uint)conn->buf_recv[bufID-num_bufs][q+40]);
-					buf_send[bufID-num_bufs][q] = (uint)buf_recv[bufID-num_bufs][q+40];
-				}
+				//	buf_send[bufID-num_bufs][q] = (uint)buf_recv[bufID-num_bufs][q+40];
+				//}
 				//printf("\n\n");
 				//if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) printf("notificationCount = %llu \n", notifCount);
             #endif
@@ -1025,6 +1449,11 @@ process:
 				start_cycle = readTSC(); 
 			#endif
         }
+		#if IDEAL
+		}
+		}
+		#endif
+		//printf("before round robin \n");
 		#if ROUND_ROBIN
 			//priority++;
 			//if(priority == numberOfPriorities) priority = 0;
@@ -1059,17 +1488,19 @@ process:
 					//isZero = true;
 					//continue;
 
-					for (i = 0; i < ne; ++i) {
+					//for (i = 0; i < ne; ++i) {
+						i = 0;
 						if (wc[i].status != IBV_WC_SUCCESS) {
-							fprintf(stderr, "Failed status %s (%d) for wr_id %d\n",
+							fprintf(stderr, "1 Failed status %s (%d) for wr_id %d\n",
 								ibv_wc_status_str(wc[i].status),
 								wc[i].status, (int) wc[i].wr_id);
 						}
 					
-						uint16_t a = (int) wc[i].wr_id;
+						a = (int) wc[i].wr_id;
 
-						switch (a) {
-						case 0 ... num_bufs-1:
+						//switch (a) {
+						//case 0 ... num_bufs-1:
+						if(a >= 0 && a < num_bufs) {
 
 							qpID = a/bufsPerQP;
 							conn = connections[qpID];
@@ -1086,8 +1517,10 @@ process:
 								printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
 							#endif
 
-							break;
-						case num_bufs ... (2*num_bufs)-1:
+							//break;
+						}
+						else {
+						//case num_bufs ... (2*num_bufs)-1:
 							#if MEAS_TIME_ON_SERVER
 								clock_gettime(CLOCK_MONOTONIC, &requestStart);
 							#endif
@@ -1096,7 +1529,10 @@ process:
 								#if debugFPGA
 								printf("b4 setting work item metadata for next iter \n");
 								#endif
-								*(res.buf) = 0xFF; //htonll(0x0000000000000000);
+
+								//printf("setting buf sequence number to 255 \n");
+
+								(res.buf)[connIndex^byteFlipMask] = 0xFF; //htonll(0x0000000000000000);
 
 								(processBufB4Polling[connIndex]) = a;
 								(processBufB4PollingSrcQP[connIndex]) = wc[i].src_qp;
@@ -1107,9 +1543,9 @@ process:
 								foundRecv = true;
 							#endif
 
-							break;
+							//break;
 						}
-					}
+					//}
 				}
 				else {
 					#if debugFPGA
@@ -1214,7 +1650,7 @@ int main(int argc, char *argv[])
 {
 	
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:n:z:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:n:z:b:")) != -1)
     switch (c)
 	{
       case 't':
@@ -1237,6 +1673,9 @@ int main(int argc, char *argv[])
 		break;
 	  case 'z':
 		tcp_port = atoi(optarg);
+		break;
+	  case 'b':
+		buffersPerQ = atoi(optarg);
 		break;
       default:
 	  	printf("Unrecognized command line argument\n");
@@ -1304,7 +1743,9 @@ int main(int argc, char *argv[])
 ////
 
 	metaCQ.resize(numberOfPriorities , list<recvReq>(0,{0,0}));
+	recv_bufs_num = buffersPerQ*NUM_QUEUES;
 	bufsPerQP = recv_bufs_num/NUM_QUEUES;
+	printf("bufsPerQP = %llu, recv_bufs_num = %llu \n",bufsPerQP, recv_bufs_num);
 
 	for (uint i = 0; i < NUM_QUEUES; i++) {
 		//if(i > 500) { 

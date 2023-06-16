@@ -93,7 +93,7 @@ struct resources {
     struct ibv_cq *cq;                  // CQ handle
     struct ibv_qp *qp;                  // QP handle
     struct ibv_mr *mr;                  // MR handle for buf
-    char *buf;                          // memory buffer pointer, used for
+    alignas(64) volatile char *buf;                 // memory buffer pointer, used for
     //unsigned long long *buf;
     //uint64_t *buf;
 
@@ -415,16 +415,22 @@ static int resources_create(struct resources *res, uint32_t numberOfQueues) {
     // a buffer to hold the data
     size = MSG_SIZE;
     printf("number of queues = %d \n", numberOfQueues);
-    res->buf = (char *)calloc(numberOfQueues, size);
+
+    uint64_t numAllocatedBytes;
+    if(numberOfQueues % 64 == 0) numAllocatedBytes = numberOfQueues;
+    else numAllocatedBytes = ((numberOfQueues/64) + 1)*64;
+
+    printf("number of bytes allocated = %llu \n", numAllocatedBytes);
+    res->buf = (volatile char *)calloc(numAllocatedBytes, size);
     assert(res->buf != NULL);
     printf("%x \n",(res->buf));
     int t;
-    for(t = 0; t < 4; t++) printf("%x \n",&((res->buf)[t]));
+    //for(t = 0; t < numAllocatedBytes; t++) printf("%x , %llu \n",&((res->buf)[t]), (res->buf)[t]);
 
     // register the memory buffer
     mr_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE; //| IBV_ACCESS_REMOTE_READ;
  
-    res->mr = ibv_reg_mr(res->pd, res->buf, numberOfQueues*size, mr_flags);
+    res->mr = ibv_reg_mr(res->pd, (void *)res->buf, numAllocatedBytes*size, mr_flags);
     assert(res->mr != NULL);
 
     //res->mr->rkey = 0x00000000;
@@ -702,7 +708,7 @@ static int connect_qp(struct resources *res) {
 static int resources_destroy(struct resources *res) {
     ibv_destroy_qp(res->qp);
     ibv_dereg_mr(res->mr);
-    free(res->buf);
+    free((void*)res->buf);
     ibv_destroy_cq(res->cq);
     ibv_dealloc_pd(res->pd);
     ibv_close_device(res->ib_ctx);

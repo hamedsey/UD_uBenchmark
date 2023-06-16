@@ -17,6 +17,8 @@
 #include <malloc.h>
 #endif
 
+extern uint64_t buffersPerQ;
+
 int RDMAConnection::pp_get_port_info(struct ibv_context *context, int port,
 		     struct ibv_port_attr *attr)
 {
@@ -51,6 +53,14 @@ void RDMAConnection::gid_to_wire_gid(const union ibv_gid *gid, char wgid[])
 struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues)
 {
 	if(id == 0) {
+
+		buf_recv = (char**)malloc(recv_bufs_num*sizeof(char*));
+		buf_send = (char**)malloc(recv_bufs_num*sizeof(char*));
+
+		mr_recv = (struct ibv_mr**)malloc(recv_bufs_num*sizeof(struct ibv_mr*));
+		mr_send = (struct ibv_mr**)malloc(recv_bufs_num*sizeof(struct ibv_mr*));
+
+
 		ctxGlobal = (pingpong_context_global*)malloc(sizeof(struct pingpong_context_global));
 		memset(ctxGlobal, 0x00, sizeof(struct pingpong_context_global));
 		if (!ctxGlobal)
@@ -130,12 +140,29 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 			}
 		}
 
-		#if SHARED_CQ
-			ctxGlobal->cq = ibv_create_cq(ctxGlobal->context, 2*rx_depth + 1, NULL,
+		uint64_t cqDepth = 2*numQueues*buffersPerQ + 1;
+		printf("cqDepth = %llu \n", cqDepth);
+		#if SHARED_CQ //for signaled sends use the 2x multiple
+			ctxGlobal->cq = ibv_create_cq(ctxGlobal->context, cqDepth, NULL,
 						ctxGlobal->channel, 0);
 			if (!ctxGlobal->cq) {
 				fprintf(stderr, "Couldn't create CQ\n");
 				goto clean_mr;
+			}
+		#endif
+
+		#if USE_SRQ
+			struct ibv_srq_init_attr srq_init_attr;
+			
+			memset(&srq_init_attr, 0, sizeof(srq_init_attr));
+			
+			srq_init_attr.attr.max_wr  = 32767;
+			srq_init_attr.attr.max_sge = 31;
+			
+			ctxGlobal->srq = ibv_create_srq(ctxGlobal->pd, &srq_init_attr);
+			if (!ctxGlobal->srq) {
+				fprintf(stderr, "Error, ibv_create_srq() failed\n");
+				exit(0);
 			}
 		#endif
 	}
@@ -178,6 +205,10 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		init_attr.cap.max_recv_sge = 1;
 		init_attr.sq_sig_all = 0;
 
+		#if USE_SRQ
+			init_attr.srq = ctxGlobal->srq;
+		#endif
+
 		init_attr.qp_type = IBV_QPT_UD;
 
 		if(id == 0) {
@@ -189,7 +220,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 					goto clean_cq;
 				}
 
-				if(ctx->qp->qp_num %(256) == 0) break;
+				if(ctx->qp->qp_num %(512) == 0) break;
 				else ibv_destroy_qp(ctx->qp);
 			}
 		}
@@ -237,6 +268,14 @@ clean_cq:
 		ibv_destroy_cq(ctx->cq);
 	#endif
 
+clean_srq:
+	#if USE_SRQ
+		if (ibv_destroy_srq(ctxGlobal->srq)) {
+			fprintf(stderr, "Error, ibv_destroy_srq() failed\n");
+			exit(0);
+		}
+	#endif
+
 clean_mr:
 	for (int j = 0; j<recv_bufs_num; j++) {
 		ibv_dereg_mr(mr_recv[j]);
@@ -270,28 +309,32 @@ int RDMAConnection::pp_post_recv(struct pingpong_context *ctx, int wr_id)
 	struct ibv_sge list;
 	memset(&list, 0, sizeof(list));
 
+	struct ibv_recv_wr wr;
+	memset(&wr, 0, sizeof(wr));
+
+	struct ibv_recv_wr *bad_wr;
+	memset(&bad_wr, 0, sizeof(bad_wr));
+
 	uint16_t bufIndex = wr_id-recv_bufs_num;
 	//uint16_t qpID = bufIndex/bufsPerQP;
-
 	//printf("bufIndex = %d \n", bufIndex);
 	//printf("qpID = %d \n",qpID);
 	//printf("bufsPerQP = %d \n", bufsPerQP);
-
 
 	list.addr = (uintptr_t) buf_recv[bufIndex];
 	list.length = 40 + size;
 	list.lkey = mr_recv[bufIndex]->lkey;
 
-	struct ibv_recv_wr wr;
-	memset(&wr, 0, sizeof(wr));
-
 	wr.wr_id = wr_id;
 	wr.sg_list = &list;
 	wr.num_sge = 1;
 
-	struct ibv_recv_wr *bad_wr;
-	memset(&bad_wr, 0, sizeof(bad_wr));
-	return ibv_post_recv(ctx->qp, &wr, &bad_wr);
+	#if USE_SRQ
+		return ibv_post_srq_recv(ctxGlobal->srq, &wr, &bad_wr);
+	#else
+		return ibv_post_recv(ctx->qp, &wr, &bad_wr);
+	#endif
+
 }
 
 int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues)
@@ -509,7 +552,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 		memset(&my_dest.gid, 0, sizeof my_dest.gid);
 
 	inet_ntop(AF_INET6, &my_dest.gid, gid, sizeof gid);
-	printf("  local address:  LID 0x%04x, QPN 0x%06x, (int)QPN %d, PSN 0x%06x: GID %s\n", my_dest.lid, my_dest.qpn, my_dest.qpn, my_dest.psn, gid);
+	//printf("  local address:  LID 0x%04x, QPN 0x%06x, (int)QPN %d, PSN 0x%06x: GID %s\n", my_dest.lid, my_dest.qpn, my_dest.qpn, my_dest.psn, gid);
 
 	if(id == 0) {
 		rem_dest = pp_server_exch_dest(servername);
@@ -520,7 +563,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 
 		inet_ntop(AF_INET6, &rem_dest->gid, gid, sizeof gid);
 
-		
+		printf("  local address:  LID 0x%04x, QPN 0x%06x, (int)QPN %d, PSN 0x%06x: GID %s\n", my_dest.lid, my_dest.qpn, my_dest.qpn, my_dest.psn, gid);
 		printf("  remote address: LID 0x%04x, QPN 0x%06x, PSN 0x%06x, GID %s\n",rem_dest->lid, rem_dest->qpn, rem_dest->psn, gid);
 	}
 

@@ -19,8 +19,10 @@
 #include <unistd.h>
 #include <malloc.h>
 
-#define SHARED_CQ 0
+#define SHARED_CQ 1
 //if FPGA_NOTIFICATION is 1, this should be zero
+
+#define USE_SRQ 0
 
 using namespace std;
 
@@ -28,16 +30,23 @@ using namespace std;
 
 struct pingpong_dest    *rem_dest;
 
+uint64_t bufsPerQP = 1;
+
+struct pingpong_context_global *ctxGlobal;
+
+/*
 static const int recv_bufs_num = 1000;//128;
 char * buf_recv [recv_bufs_num];
 struct ibv_mr* mr_recv [recv_bufs_num];
-
 char * buf_send [recv_bufs_num];
 struct ibv_mr* mr_send [recv_bufs_num];
+*/
 
-uint64_t bufsPerQP = 0;
-
-struct pingpong_context_global *ctxGlobal;
+uint64_t recv_bufs_num = 1000;
+char ** buf_recv;
+struct ibv_mr** mr_recv;
+char ** buf_send;
+struct ibv_mr** mr_send;
 
 
 struct pingpong_context_global {
@@ -48,6 +57,11 @@ struct pingpong_context_global {
 	#if SHARED_CQ
 		struct ibv_cq		*cq;
 	#endif
+
+	#if USE_SRQ
+		struct ibv_srq *srq;
+	#endif
+
 };
 
 struct pingpong_context {

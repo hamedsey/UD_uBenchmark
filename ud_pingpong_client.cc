@@ -48,8 +48,10 @@ enum {
 	UNIFORM = 2,
 	EXPONENTIAL = 3,
     BIMODAL = 4,
-	OTHER =  5,
+	FB =  5,
 	PC = 6,
+	SQ = 7,
+	NC = 8,
 };
 
 /*
@@ -111,7 +113,7 @@ int gidx_in;
 int remote_qp0_in;
 char* servername;
 bool terminate_load = false;
-int SERVER_THREADS = 8;
+int SERVER_THREADS = 1;
 uint64_t goalLoad = 0;
 uint16_t mean = 1000;
 uint16_t numberOfPriorities = 0; //not used
@@ -409,7 +411,7 @@ void* client_send(void* x) {
 			priorityID[i] = result;
 		}
 	}
-	else if(distribution_mode == OTHER) {
+	else if(distribution_mode == FB) {
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
 		//std::discrete_distribution<> bm;
@@ -472,6 +474,41 @@ void* client_send(void* x) {
 			}
 		}
 	}
+	else if(distribution_mode == SQ) {
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+			//printf("result = %d \n",result);
+			serviceTime[i] = mean;		
+			priorityID[i] = numberOfPriorities-1;
+		}
+	}
+	else if(distribution_mode == NC) {
+		//traffic passes through 20 queues all the time and through the rest with a probability of 5%
+		std::random_device rd{};
+		std::mt19937 gen{rd()};
+		std::discrete_distribution<> bm({95, 5});
+		
+		uint16_t numQueuesGettingMoreLoad = 20;
+		//uint16_t numQueuesGettingLessLoad = numberOfPriorities-numQueuesGettingMoreLoad;
+
+		uint16_t twentyPercent = 0;
+		uint16_t eightyPercent = numQueuesGettingMoreLoad;
+
+		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
+			//printf("result = %d \n",result);
+			serviceTime[i] = mean;	
+			if(bm(gen) == 0) {
+				priorityID[i] = twentyPercent;
+				if(twentyPercent == numQueuesGettingMoreLoad-1) twentyPercent = 0;
+				else twentyPercent++;
+			}
+			else {
+				priorityID[i] = eightyPercent;
+				if(eightyPercent == numberOfPriorities-1) eightyPercent = numQueuesGettingMoreLoad;
+				else eightyPercent++;
+			}
+		}
+	}
+
 
 	uint64_t singleThreadWait = 1000000000/goalLoad;
 	uint64_t avg_inter_arr_ns = active_thread_num*singleThreadWait;
@@ -507,7 +544,7 @@ void* client_send(void* x) {
 	clock_gettime(CLOCK_MONOTONIC,&ttime);
 	uint64_t arrival_wait_time = 0;
 	uint64_t outs_send = 0;
-
+	uint8_t sequence_number = 0;
 	while(terminate_load == false)
 	{
 		//for (int i = 0; i < window_size; i++) {
@@ -530,10 +567,11 @@ void* client_send(void* x) {
 
 			conn->buf_send[i][1] = lat_lower;
 			conn->buf_send[i][0] = lat_upper;
-			conn->buf_send[i][2] = 255;
+			conn->buf_send[i][2] = sequence_number;
 			conn->buf_send[i][3] = 255;
 			conn->buf_send[i][10] = priority;
-
+			if(sequence_number == 255) sequence_number = 0;
+			else sequence_number++;
 			
 			//conn->buf_send[i][3] = (conn->ctx->qp->qp_num & 0xFF0000) >> 16;
 			//conn->buf_send[i][4] = (conn->ctx->qp->qp_num & 0x00FF00) >> 8;
