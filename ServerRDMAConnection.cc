@@ -50,7 +50,7 @@ void RDMAConnection::gid_to_wire_gid(const union ibv_gid *gid, char wgid[])
 		sprintf(&wgid[i * 8], "%08x", htobe32(tmp_gid[i]));
 }
 
-struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues)
+struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues, uint64_t numThreads)
 {
 	if(id == 0) {
 
@@ -140,14 +140,17 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 			}
 		}
 
-		uint64_t cqDepth = 2*numQueues*buffersPerQ + 1;
-		printf("cqDepth = %llu \n", cqDepth);
 		#if SHARED_CQ //for signaled sends use the 2x multiple
-			ctxGlobal->cq = ibv_create_cq(ctxGlobal->context, cqDepth, NULL,
-						ctxGlobal->channel, 0);
-			if (!ctxGlobal->cq) {
-				fprintf(stderr, "Couldn't create CQ\n");
-				goto clean_mr;
+			uint64_t cqDepth = 2*numQueues*buffersPerQ + 1;
+			printf("cqDepth = %llu \n", cqDepth);
+			ctxGlobal->cq = (struct ibv_cq **)malloc(numThreads*sizeof(struct ibv_cq *));
+			for(uint8_t t = 0; t < numThreads; t++) {
+				printf("t = = %llu \n", t);
+				ctxGlobal->cq[t] = ibv_create_cq(ctxGlobal->context, cqDepth, NULL, ctxGlobal->channel, 0);
+				if (!ctxGlobal->cq[t]) {
+					fprintf(stderr, "Couldn't create CQ\n");
+					goto clean_mr;
+				}
 			}
 		#endif
 
@@ -177,8 +180,11 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 	ctx->rx_depth   = rx_depth;
 
 	#if !SHARED_CQ
-		ctx->cq = ibv_create_cq(ctxGlobal->context, 2*rx_depth + 1, NULL,
-					ctxGlobal->channel, 0);
+		//uint64_t cqDepth = 2*buffersPerQ + 1;
+		//printf("cqDepth = %llu \n", cqDepth);
+		//ctx->cq = ibv_create_cq(ctxGlobal->context, 2*rx_depth + 1, NULL, ctxGlobal->channel, 0);
+		ctx->cq = ibv_create_cq(ctxGlobal->context, 2*buffersPerQ + 1, NULL, ctxGlobal->channel, 0);
+
 		if (!ctx->cq) {
 			fprintf(stderr, "Couldn't create CQ\n");
 			goto clean_mr;
@@ -192,8 +198,8 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		memset(&init_attr, 0, sizeof(init_attr));
 				
 		#if SHARED_CQ
-			init_attr.send_cq = ctxGlobal->cq;
-			init_attr.recv_cq = ctxGlobal->cq;
+			init_attr.send_cq = ctxGlobal->cq[id%numThreads];
+			init_attr.recv_cq = ctxGlobal->cq[id%numThreads];
 		#else
 			init_attr.send_cq = ctx->cq;
 			init_attr.recv_cq = ctx->cq;
@@ -263,7 +269,8 @@ clean_qp:
 
 clean_cq:
 	#if SHARED_CQ
-		ibv_destroy_cq(ctxGlobal->cq);
+		for(uint8_t t = 0; t < numThreads; t++)
+			ibv_destroy_cq(ctxGlobal->cq[t]);
 	#else
 		ibv_destroy_cq(ctx->cq);
 	#endif
@@ -337,7 +344,7 @@ int RDMAConnection::pp_post_recv(struct pingpong_context *ctx, int wr_id)
 
 }
 
-int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues)
+int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues, uint64_t numThreads)
 {
 	//for(int i = 0; i < numQueues; i++){
 		if (ibv_destroy_qp(ctx->qp)) {
@@ -346,10 +353,12 @@ int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueue
 		}
 	//}
 	#if SHARED_CQ
-		if (ibv_destroy_cq(ctxGlobal->cq)) {
-			fprintf(stderr, "Couldn't destroy CQ\n");
-			return 1;
-		}	
+		for(uint8_t t = 0; t < numThreads; t++) {
+			if (ibv_destroy_cq(ctxGlobal->cq[t])) {
+				fprintf(stderr, "Couldn't destroy CQ\n");
+				return 1;
+			}	
+		}
 	#else
 		if (ibv_destroy_cq(ctx->cq)) {
 			fprintf(stderr, "Couldn't destroy CQ\n");
@@ -492,7 +501,7 @@ int RDMAConnection::pp_post_send(struct pingpong_context *ctx, uint32_t qpn, uns
 	return ibv_post_send(ctx->qp, &wr, &bad_wr);
 }
 
-RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* servername, uint64_t numQueues)
+RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* servername, uint64_t numQueues, uint64_t numThreads)
 {
 	//printf("id = %d \n", id);
 	strncpy(ib_devname, ib_devname_in, 7);
@@ -517,15 +526,16 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 	}
 
 	//printf("before init ctx, id = %d \n",id);
-	ctx = pp_init_ctx(ib_dev, rx_depth, ib_port, use_event, id, numQueues);
+	ctx = pp_init_ctx(ib_dev, rx_depth, ib_port, use_event, id, numQueues, numThreads);
 	if (!ctx) {
 		printf("context creation invalid \n");
 	}
 	//printf("after init ctx, id = %d \n",id);
 
+	/*
 	if (use_event) {
 		#if SHARED_CQ
-			if (ibv_req_notify_cq(ctxGlobal->cq, 0)) {
+			if (ibv_req_notify_cq(ctxGlobal->cq[0], 0)) {
 				fprintf(stderr, "Couldn't request CQ notification\n");
 			}
 		#else
@@ -534,6 +544,7 @@ RDMAConnection::RDMAConnection(int id,  char *ib_devname_in, int gidx_in, char* 
 			}
 		#endif
 	}
+	*/
 
 	if (pp_get_port_info(ctxGlobal->context, ib_port, &ctx->portinfo)) {
 		fprintf(stderr, "Couldn't get port info\n");

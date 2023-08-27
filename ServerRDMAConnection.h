@@ -55,7 +55,7 @@ struct pingpong_context_global {
 	struct ibv_pd		*pd;
 
 	#if SHARED_CQ
-		struct ibv_cq		*cq;
+		struct ibv_cq		**cq;
 	#endif
 
 	#if USE_SRQ
@@ -86,14 +86,14 @@ struct pingpong_dest {
 
 class RDMAConnection {
 public:
-	RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername, uint64_t numQueues);
+	RDMAConnection(int id, char *ib_devname_in, int gidx_in, char* servername, uint64_t numQueues, uint64_t numThreads);
 
 	int pp_get_port_info(struct ibv_context *context, int port, struct ibv_port_attr *attr);
 	void wire_gid_to_gid(const char *wgid, union ibv_gid *gid);
 	void gid_to_wire_gid(const union ibv_gid *gid, char wgid[]);
 
-	struct pingpong_context* pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues);
-	int pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues);
+	struct pingpong_context* pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues, uint64_t numThreads);
+	int pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues, uint64_t numThreads);
 	int pp_post_recv(struct pingpong_context *ctx, int wr_id);
 	struct pingpong_dest* pp_server_exch_dest(char *servername);
 	int pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx, int id);

@@ -105,7 +105,7 @@ struct resources res;
 
 struct config_t config = {.dev_name = NULL,
                           .server_name = NULL,
-                          .tcp_port = 20000,
+                          .tcp_port = 20001,
                           .ib_port = 1,
                           .gid_idx = -1};
 
@@ -417,7 +417,7 @@ static int resources_create(struct resources *res, uint32_t numberOfQueues) {
     printf("number of queues = %d \n", numberOfQueues);
 
     uint64_t numAllocatedBytes;
-    if(numberOfQueues % 64 == 0) numAllocatedBytes = numberOfQueues;
+    if(numberOfQueues % 8 == 0) numAllocatedBytes = numberOfQueues;
     else numAllocatedBytes = ((numberOfQueues/64) + 1)*64;
 
     printf("number of bytes allocated = %llu \n", numAllocatedBytes);

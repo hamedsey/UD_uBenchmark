@@ -58,13 +58,13 @@
 //if SHARED_CQ is 1, this should be zero (for strict policy)
 
 #define PROCESS_IN_ORDER 0
-#define STRICT_PRIORITY 0
+#define STRICT_PRIORITY 1
 #define ROUND_ROBIN 0
 #define WEIGHTED_ROUND_ROBIN 0
 #define ASSERT 0  //should be same as REORDER pragma in client //disable if using SRQ (shared receive queue)
 #define PRINT 0
 
-#define IDEAL 1
+#define IDEAL 0 //enable shared CQ with this
 
 
 			//1000
@@ -81,8 +81,7 @@ struct recvReq {
 };
 
 uint64_t numberOfPriorities = 0;
-vector<list<recvReq> > metaCQ; //(numberOfPriorities , list<uint16_t>(0,0));
-set<uint16_t> skipList;
+
 
 
 uint32_t * all_rcnts;
@@ -110,8 +109,9 @@ char *ib_devname_in;
 int gidx_in;
 int NUM_THREADS = 4;
 int NUM_QUEUES = 55;
-uint64_t tcp_port = 20001;
+uint64_t tcp_port = 20002;
 uint64_t buffersPerQ = 100;
+bool terminateRun = false;
 
 //vector<vector<uint16_t> > indexOfNonZeroPriorities (numberOfPriorities , vector<uint16_t> (0, 0));
 
@@ -120,6 +120,8 @@ uint64_t count01 = 0;
 uint64_t count11 = 0;
 uint64_t countOther = 0;
 uint64_t idlePolls = 0;
+
+uint64_t *countPriority;
 
 void     INThandler(int);
 
@@ -299,6 +301,10 @@ void* server_threadfunc(void* x) {
 		//for(int z = 0; z < numberOfPriorities; z++) printf("%llu \n",queueWeights[z]);
 	#endif
 
+	vector<list<recvReq> > metaCQ; //(numberOfPriorities , list<uint16_t>(0,0));
+	metaCQ.resize(numberOfPriorities , list<recvReq>(0,{0,0}));
+
+	set<uint16_t> skipList;
 	set<uint16_t>::iterator skipListIter = skipList.begin();
 	set<uint16_t>::iterator tempskipListIter = skipList.begin();
 	set<uint16_t>::iterator skipListIterPrev = skipList.begin();
@@ -348,7 +354,7 @@ void* server_threadfunc(void* x) {
 		uint8_t resultIndexWorkFound;
 	#endif
 
-	while (1) {
+	while (terminateRun == false) {
 		#if RR_POLL
 			conn = connections[offset];
 			//printf("offset = %d \n",offset);
@@ -360,7 +366,7 @@ void* server_threadfunc(void* x) {
 			conn = connections[offset];
 		#endif
 	
-		struct timespec ttime,curtime;
+		//struct timespec ttime,curtime;
 
 		
 		//conn = connections[0];
@@ -369,7 +375,7 @@ void* server_threadfunc(void* x) {
 			bool foundWork = false;
 
 			//printf("Contents of FPGA notification= %llu \n", htonll(*(res.buf)));
-			//conn = connections[NUM_QUEUES - 1 - __builtin_clzll(htonll(*(res.buf)))];
+			//conn = connections[NUM_QUEUES - 1 - __builtin_clzll(htonll(*(res.buf)))]; 
 
 			//only for debugging purposes
 			/*
@@ -514,6 +520,10 @@ void* server_threadfunc(void* x) {
 
 				unsigned long long value = htonll(*reinterpret_cast<volatile unsigned long long*>(res.buf + i));
 				__asm__ __volatile__ ("lzcnt %1, %0" : "=r" (leadingZeros) : "r" (value):);
+				
+				//leadingZeros = __builtin_clzll(value); 
+				//leadingZeros = _lzcnt_u64(value);
+
 				#if debugFPGA
 				printf("leading count = %llu, value = %llu \n", leadingZeros, value);
 				for(uint64_t y = 0; y < 8 ; y++) {
@@ -535,7 +545,7 @@ void* server_threadfunc(void* x) {
 					foundWork = true;
 					//usleep(100);
 					conn = connections[connIndex];
-					sequenceNumberInBV = (res.buf)[connIndex];
+					//sequenceNumberInBV = (res.buf)[connIndex];
 					(res.buf)[connIndex] = 0x00;
 					if(processBufB4Polling[connIndex] != NULL && processBufB4PollingSrcQP[connIndex] != NULL) {
 						#if debugFPGA
@@ -875,10 +885,10 @@ void* server_threadfunc(void* x) {
 				//for(uint64_t x = 0; x < 1000000; x++) {
 
 				#if SHARED_CQ && IDEAL
-					ne = ibv_poll_cq(ctxGlobal->cq, 1 , wc);
+					ne = ibv_poll_cq(ctxGlobal->cq[thread_num], 1 , wc);
 					if(ne == 0) continue;
 				#elif SHARED_CQ
-					ne = ibv_poll_cq(ctxGlobal->cq, num_bufs*2 , wc);
+					ne = ibv_poll_cq(ctxGlobal->cq[thread_num], num_bufs*2 , wc);
 				#else 
 					#if debugFPGA
 					printf("poll (1) \n");
@@ -1044,6 +1054,8 @@ void* server_threadfunc(void* x) {
 					received = true;
 
 					#if STRICT_POLL
+						//if(offset == NUM_QUEUES-1) printf("offset = %llu \n",NUM_QUEUES-1);
+						//countPriority[offset]++;
 						offset = 0;
 					#endif	
 
@@ -1349,11 +1361,17 @@ process:
 				//printf("packet sequence number = %lu , sequence number in BV = %lu \n", sequence_number, sequenceNumberInBV);
 			#endif
 
+			countPriority[(uint8_t)buf_recv[bufID-num_bufs][50]]++;
             uint8_t sleep_int_lower = (uint)buf_recv[bufID-num_bufs][41];
             uint8_t sleep_int_upper = (uint)buf_recv[bufID-num_bufs][40];	
 
             //uint8_t checkByte2 = (uint)buf_recv[bufID-num_bufs][42];	
-            //uint8_t checkByte3 = (uint)buf_recv[bufID-num_bufs][43];	
+            uint8_t checkByte3 = (uint)buf_recv[bufID-num_bufs][43];	
+			if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte3 == 255) {
+				for(int g = 0; g < numberOfPriorities; g++) printf("%llu \n",countPriority[g]);
+				terminateRun = true;
+				break;
+			}
 
             #if ENABLE_SERV_TIME
                 //if (sleep_int_upper<0) sleep_int_upper+= 256;
@@ -1631,12 +1649,12 @@ process:
 
 
 
-	if (scnt != rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
+	//if (scnt != rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
 
         all_rcnts[thread_num] = rcnt;
         all_scnts[thread_num] = scnt;
 
-	if (conn->pp_close_ctx(conn->ctx, NUM_QUEUES)) {
+	if (conn->pp_close_ctx(conn->ctx, NUM_QUEUES, NUM_THREADS)) {
 		printf("close ctx returned 1\n");
 	}
 
@@ -1742,7 +1760,6 @@ int main(int argc, char *argv[])
 	*/
 ////
 
-	metaCQ.resize(numberOfPriorities , list<recvReq>(0,{0,0}));
 	recv_bufs_num = buffersPerQ*NUM_QUEUES;
 	bufsPerQP = recv_bufs_num/NUM_QUEUES;
 	printf("bufsPerQP = %llu, recv_bufs_num = %llu \n",bufsPerQP, recv_bufs_num);
@@ -1751,12 +1768,14 @@ int main(int argc, char *argv[])
 		//if(i > 500) { 
 		//printf("before creating connection i = %lu \n",i);
 		//RDMAConnection *conn;
-		connections.push_back(new RDMAConnection(i, ib_devname_in, gidx_in ,servername, NUM_QUEUES));
+		connections.push_back(new RDMAConnection(i, ib_devname_in, gidx_in ,servername, NUM_QUEUES, NUM_THREADS));
 		//printf("after creating connection i = %lu \n",i);
 	}
 
 	all_rcnts = (uint32_t*)malloc(NUM_THREADS*sizeof(uint32_t));
 	all_scnts = (uint32_t*)malloc(NUM_THREADS*sizeof(uint32_t));
+	countPriority = (uint64_t *)malloc(numberOfPriorities*sizeof(uint64_t));
+	for(int g = 0; g < numberOfPriorities; g++) countPriority[g] = 0;
 
 	#if COUNT_IDLE_POLLS
 		idlePolls = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));

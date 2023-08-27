@@ -1,5 +1,5 @@
 #!/bin/bash
-
+sudo /etc/init.d/openibd restart
 sudo mst start
 
 # Disable ICRC and RoCE IP header checksum checks in ConnectX hardware
@@ -14,7 +14,7 @@ sudo mcra /dev/mst/mt4117_pciconf0 0x53668.3:1 0
 
 sudo iptables -F; sudo iptables -t mangle -F
 sudo iptables -D INPUT -m conntrack --ctstate INVALID -j DROP
-sudo ethtool --set-priv-flags enp24s0 sniffer on
+sudo ethtool --set-priv-flags enp24s0 sniffer off
 
 #to clear stats
 #sudo /etc/init.d/openibd restart

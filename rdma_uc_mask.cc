@@ -14,16 +14,18 @@ https://www.rdmamojo.com/2013/01/12/ibv_modify_qp/
 #include <netdb.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
 
 #define MAX_POLL_CQ_TIMEOUT 2000 // ms
 #define MSG "This is alice, h"
 #define RDMAMSGR "RDMA read operation"
 #define RDMAMSGW "FEDCBA9876543210"
-#define MSG_SIZE (1)
+#define MSG_SIZE 1
+//#define NUMQUEUES 1
 
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 static inline uint64_t htonll(uint64_t x) { return bswap_64(x); }
@@ -74,6 +76,13 @@ struct cm_con_data_t {
     uint8_t gid[16]; // GID
 } __attribute__((packed));
 
+struct cm_con_data_t_abridged {
+    uint64_t addr;   // buffer address
+    uint32_t rkey;   // remote key
+    uint32_t qp_num; // QP number
+    uint16_t lid;    // LID of the IB port
+} __attribute__((packed));
+
 // structure of system resources
 struct resources {
     struct ibv_device_attr device_attr; // device attributes
@@ -84,17 +93,8 @@ struct resources {
     struct ibv_cq *cq;                  // CQ handle
     struct ibv_qp *qp;                  // QP handle
     struct ibv_mr *mr;                  // MR handle for buf
-    //char *buf;                          // memory buffer pointer, used for
-    volatile char *buf;
-    
-    volatile unsigned long long **buffers;
-
-    /*
-    volatile unsigned long long **input512;
-    volatile unsigned long long **mask512;
-    volatile unsigned long long **output512;
-    */
-
+    alignas(64) volatile char *buf;                 // memory buffer pointer, used for
+    //unsigned long long *buf;
     //uint64_t *buf;
 
                                         // RDMA send ops
@@ -102,7 +102,6 @@ struct resources {
 };
 
 struct resources res;
-
 
 struct config_t config = {.dev_name = NULL,
                           .server_name = NULL,
@@ -140,27 +139,38 @@ static int sock_connect(const char *server_name, int port) {
     //  }
     struct addrinfo hints = {.ai_flags = AI_PASSIVE,
                              .ai_family = AF_INET,
-                             .ai_socktype = SOCK_STREAM};
+                             .ai_socktype = SOCK_DGRAM};
 
     // resolve DNS address, user sockfd as temp storage
     sprintf(service, "%d", port);
     CHECK(getaddrinfo(server_name, service, &hints, &resolved_addr));
 
-    for (iterator = resolved_addr; iterator != NULL;
-         iterator = iterator->ai_next) {
-        sockfd = socket(iterator->ai_family, iterator->ai_socktype,
-                        iterator->ai_protocol);
+    for (iterator = resolved_addr; iterator != NULL; iterator = iterator->ai_next) {
+        sockfd = socket(iterator->ai_family, iterator->ai_socktype, iterator->ai_protocol);
         assert(sockfd >= 0);
 
         if (server_name == NULL) {
             // Server mode: setup listening socket and accept a connection
-            listenfd = sockfd;
-            CHECK(bind(listenfd, iterator->ai_addr, iterator->ai_addrlen));
-            CHECK(listen(listenfd, 1));
-            sockfd = accept(listenfd, NULL, 0);
+            //listenfd = sockfd;
+            //CHECK(bind(listenfd, iterator->ai_addr, iterator->ai_addrlen));
+            struct sockaddr_in server_addr;
+            server_addr.sin_family = AF_INET;
+            server_addr.sin_port = htons(2000);
+            server_addr.sin_addr.s_addr = inet_addr("192.168.1.5");
+            
+            // Bind to the set port and IP:
+            if(bind(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+                printf("Couldn't bind to the port\n");
+                return -1;
+            }
+            
+            //for TCP
+            //CHECK(listen(listenfd, 1));
+            //sockfd = accept(listenfd, NULL, 0);
         } else {
             // Client mode: initial connection to remote
-            CHECK(connect(sockfd, iterator->ai_addr, iterator->ai_addrlen));
+            //for TCP
+            //CHECK(connect(sockfd, iterator->ai_addr, iterator->ai_addrlen));
         }
     }
 
@@ -218,7 +228,7 @@ static int poll_completion(struct resources *res) {
         goto die;
     } else {
         // CQE found
-        //INFO("Completion was found in CQ with status 0x%x\n", wc.status);
+        INFO("Completion was found in CQ with status 0x%x\n", wc.status);
     }
 
     if (wc.status != IBV_WC_SUCCESS) {
@@ -234,7 +244,7 @@ die:
 }
 
 // This function will create and post a send work request.
-static int post_send(struct resources *res, ibv_wr_opcode opcode) {
+static int post_send(struct resources *res, ibv_wr_opcode opcode, int offset) {
     struct ibv_send_wr sr;
     struct ibv_sge sge;
     struct ibv_send_wr *bad_wr = NULL;
@@ -242,7 +252,7 @@ static int post_send(struct resources *res, ibv_wr_opcode opcode) {
     // prepare the scatter / gather entry
     memset(&sge, 0, sizeof(sge));
 
-    sge.addr = (uintptr_t)res->buf;
+    sge.addr = (uintptr_t)(res->buf) + offset;
     sge.length = MSG_SIZE;
     sge.lkey = res->mr->lkey;
 
@@ -258,7 +268,8 @@ static int post_send(struct resources *res, ibv_wr_opcode opcode) {
     sr.send_flags = IBV_SEND_SIGNALED;
 
     if (opcode != IBV_WR_SEND) {
-        sr.wr.rdma.remote_addr = res->remote_props.addr;
+        sr.wr.rdma.remote_addr = res->remote_props.addr + offset;
+        printf("remote addr = %x \n", sr.wr.rdma.remote_addr);
         sr.wr.rdma.rkey = res->remote_props.rkey;
     }
 
@@ -266,7 +277,6 @@ static int post_send(struct resources *res, ibv_wr_opcode opcode) {
     // into RNR flow
     CHECK(ibv_post_send(res->qp, &sr, &bad_wr));
 
-/*
     switch (opcode) {
     case IBV_WR_SEND:
         INFO("Send request was posted\n");
@@ -281,7 +291,7 @@ static int post_send(struct resources *res, ibv_wr_opcode opcode) {
         INFO("Unknown request was posted\n");
         break;
     }
-*/
+
     // FIXME: ;)
     return 0;
 }
@@ -318,7 +328,7 @@ static void resources_init(struct resources *res) {
     res->sock = -1;
 }
 
-static int resources_create(struct resources *res) {
+static int resources_create(struct resources *res, uint32_t numberOfQueues) {
     struct ibv_device **dev_list = NULL;
     struct ibv_qp_init_attr qp_init_attr;
     struct ibv_device *ib_dev = NULL;
@@ -329,6 +339,7 @@ static int resources_create(struct resources *res) {
     int cq_size = 0;
     int num_devices;
 
+    /*
     if (config.server_name) {
         // @client
         res->sock = sock_connect(config.server_name, config.tcp_port);
@@ -350,6 +361,7 @@ static int resources_create(struct resources *res) {
 
     INFO("TCP connection was established\n");
     INFO("Searching for IB devices in host\n");
+    */
 
     // \begin acquire a specific device
     // get device names in the system
@@ -402,60 +414,26 @@ static int resources_create(struct resources *res) {
 
     // a buffer to hold the data
     size = MSG_SIZE;
-    res->buf = (char *)calloc(1, size);
-    //memset((void *)res->buf, 0xFF, 1);
+    printf("number of queues = %d \n", numberOfQueues);
+
+    uint64_t numAllocatedBytes;
+    if(numberOfQueues % 64 == 0) numAllocatedBytes = numberOfQueues;
+    else numAllocatedBytes = ((numberOfQueues/64) + 1)*64;
+
+    printf("number of bytes allocated = %llu \n", numAllocatedBytes);
+    res->buf = (volatile char *)calloc(numAllocatedBytes, size);
     assert(res->buf != NULL);
-
-    res->buffers = (volatile unsigned long long **)calloc(32,8);
-    assert(res->buf != NULL);
-    for(int p = 0; p < 32; p++) {
-        res->buffers[p] = (volatile unsigned long long *)calloc(1,8);
-        assert(res->buffers[p] != NULL);
-    }
-
-    /*
-    size_t alignment, elementSize, arraySize, totalSize, elementSize2, arraySize2, totalSize2;
-    alignment = 64;    // Set the desired alignment
-    elementSize = 8;   // Set the size of each array element
-    arraySize = 4;    // Set the number of elements in the array (number of 512 bit variables)
-    totalSize = elementSize * arraySize;
-    elementSize2 = 8;   // Set the size of each array element
-    arraySize2 = 4;    // Set the number of elements in the array (number of 8B variables in a 512 bit variables)
-    totalSize2 = elementSize2 * arraySize2;
-
-    res->input512 = (volatile unsigned long long **)aligned_alloc(alignment,totalSize);
-    assert(res->input512 != NULL);
-    for(int p = 0; p < 4; p++) {
-        res->input512[p] = (volatile unsigned long long *)aligned_alloc(alignment,totalSize2);
-        assert(res->input512[p] != NULL);
-        *(res->input512[p]) = 0xFFFFFFFFFFFFFFFF;
-    }
-    
-    res->mask512 = (volatile unsigned long long **)aligned_alloc(alignment,totalSize);
-    assert(res->mask512 != NULL);
-    for(int p = 0; p < 4; p++) {
-        res->mask512[p] = (volatile unsigned long long *)aligned_alloc(alignment,totalSize2);
-        assert(res->mask512[p] != NULL);
-        *(res->mask512[p]) = 0xFFFFFFFFFFFFFFFF;
-    }
-
-    res->output512 = (volatile unsigned long long **)aligned_alloc(alignment,totalSize);
-    assert(res->output512 != NULL);
-    for(int p = 0; p < 4; p++) {
-        res->output512[p] = (volatile unsigned long long *)aligned_alloc(alignment,totalSize2);
-        assert(res->output512[p] != NULL);
-    }
-    */
-
-    //unsigned long long tmp;
-    //tmp = __builtin_clzll(htonll(*(res->buf)) & 0x00000000000000FF);
-    //assert(tmp == 56);
+    printf("%x \n",(res->buf));
+    int t;
+    //for(t = 0; t < numAllocatedBytes; t++) printf("%x , %llu \n",&((res->buf)[t]), (res->buf)[t]);
 
     // register the memory buffer
     mr_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE; //| IBV_ACCESS_REMOTE_READ;
  
-    res->mr = ibv_reg_mr(res->pd, (void*)res->buf, size, mr_flags);
+    res->mr = ibv_reg_mr(res->pd, (void *)res->buf, numAllocatedBytes*size, mr_flags);
     assert(res->mr != NULL);
+
+    //res->mr->rkey = 0x00000000;
 
     INFO(
         "MR was registered with addr=%p, lkey= 0x%x, rkey= 0x%x, flags= 0x%x\n",
@@ -575,6 +553,9 @@ static int connect_qp(struct resources *res) {
     struct cm_con_data_t local_con_data;
     struct cm_con_data_t remote_con_data;
     struct cm_con_data_t tmp_con_data;
+
+    struct cm_con_data_t_abridged placeholder_con_data;
+
     char temp_char;
     union ibv_gid my_gid;
 
@@ -595,8 +576,86 @@ static int connect_qp(struct resources *res) {
 
     INFO("\n Local LID      = 0x%x\n", res->port_attr.lid);
 
-    sock_sync_data(res->sock, sizeof(struct cm_con_data_t),
-                   (char *)&local_con_data, (char *)&tmp_con_data);
+    //sock_sync_data(res->sock, sizeof(struct cm_con_data_t),(char *)&local_con_data, (char *)&tmp_con_data);
+    if (config.server_name) { //client
+        int socket_desc;
+        socket_desc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        assert(socket_desc >= 0);
+        printf("CLIENT: Socket created successfully\n");
+
+        struct sockaddr_in server_addr;
+        int server_struct_length = sizeof(server_addr);
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(2000);
+        server_addr.sin_addr.s_addr = inet_addr("192.168.1.5");
+
+        if(sendto(socket_desc, &local_con_data, sizeof(local_con_data), 0,
+            (struct sockaddr*)&server_addr, server_struct_length) < 0){
+            printf("CLIENT: Unable to send message\n");
+            return -1;
+        }
+        
+        // Receive the server's response:
+        if(recvfrom(socket_desc, &tmp_con_data, sizeof(tmp_con_data), 0,
+            (struct sockaddr*)&server_addr, (socklen_t*)&server_struct_length) < 0){
+            printf("Error while receiving server's msg\n");
+            return -1;
+        }
+        
+        if(sendto(socket_desc, &tmp_con_data, sizeof(placeholder_con_data), 0,
+            (struct sockaddr*)&server_addr, server_struct_length) < 0){
+            printf("CLIENT: Unable to send message\n");
+            return -1;
+        }
+    }
+    else { //server
+        int socket_desc;
+        socket_desc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        assert(socket_desc >= 0);
+        printf("SERVER: Socket created successfully\n");
+        
+        struct sockaddr_in server_addr;
+        struct sockaddr_in client_addr;
+        int client_struct_length = sizeof(client_addr);
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(2000);
+        server_addr.sin_addr.s_addr = inet_addr("192.168.1.5");
+        
+        // Bind to the set port and IP:
+        if(bind(socket_desc, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0){
+            printf("SERVER: Couldn't bind to the port\n");
+            return -1;
+        }
+
+        printf("SERVER: Binded to the port\n");
+
+        printf("Listening for incoming messages...\n\n");
+
+
+        if (recvfrom(socket_desc, &tmp_con_data, sizeof(tmp_con_data), 0,
+            (struct sockaddr*)&client_addr, (socklen_t*)&client_struct_length) < 0){
+            printf("Couldn't receive\n");
+            return -1;
+        }
+        printf("received! \n");
+        printf("Received message from IP: %s and port: %i\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    
+        if (sendto(socket_desc, &local_con_data, sizeof(local_con_data), 0,
+            (struct sockaddr*)&client_addr, client_struct_length) < 0){
+            printf("Can't send\n");
+            return -1;
+        }
+
+        if (recvfrom(socket_desc, &placeholder_con_data, sizeof(placeholder_con_data), 0,
+            (struct sockaddr*)&client_addr, (socklen_t*)&client_struct_length) < 0){
+            printf("Couldn't receive\n");
+            return -1;
+        }
+        printf("received! \n");
+        printf("Received message from IP: %s and port: %i\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    
+
+    }
 
     remote_con_data.addr = ntohll(tmp_con_data.addr);
     remote_con_data.rkey = ntohl(tmp_con_data.rkey);
@@ -636,19 +695,10 @@ static int connect_qp(struct resources *res) {
     // modify QP state to RTS
     modify_qp_to_rts(res->qp);
 
+
     // sync to make sure that both sides are in states that they can connect to
     // prevent packet lose
     //sock_sync_data(res->sock, 1, "Q", &temp_char);
-    
-    struct cm_con_data_t temp_data;
-    
-    if (config.server_name) {
-        tmp_con_data.gid[10] = 153;
-        tmp_con_data.gid[11] = 153;
-    }
-
-    sock_sync_data(res->sock, sizeof(struct cm_con_data_t),
-                   (char *)&tmp_con_data, (char *)&temp_data);
 
     // FIXME: ;)
     return 0;
@@ -828,7 +878,7 @@ static void print_usage(const char *progname) {
 
 // This function creates and allocates all necessary system resources. These are
 // stored in res.
-int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int gid_idx) {
+int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int gid_idx, uint32_t numberOfQueues) {
 
     printf("b4 anything \n");
     char temp_char;
@@ -840,21 +890,14 @@ int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int
     config.server_name = server_name;
     
     sleep(1);
-    
-    printf("b4 print config \n");
-    print_config();
 
-    printf("b4 init resources \n");
+    print_config();
 
     // init all the resources, so cleanup will be easy
     resources_init(&res);
 
-    printf("b4 create resources \n");
-
     // create resources before using them
-    resources_create(&res);
-
-    printf("b4 connect QP \n");
+    resources_create(&res, numberOfQueues);
 
     // connect the QPs
     connect_qp(&res);
@@ -862,51 +905,93 @@ int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int
     // Now the client performs an RDMA read and then write on server. Note that
     // the server has no idea these events have occured.
 
-    /*
+    #if 0
+    
     if (config.server_name) {
         // first we read contents of server's buffer
         //post_send(&res, IBV_WR_RDMA_READ);
         //poll_completion(&res);
+        sleep(4);
 
         printf("Contents of server's buffer: %llu \n", *(res.buf));
 
         // now we replace what's in the server's buffer
-        *(res.buf) = htonll(64);
-        INFO("Now replacing it with: %llu \n", *(res.buf));
-        post_send(&res, IBV_WR_RDMA_WRITE);
+        (res.buf)[0] = 1; //64;
+        (res.buf)[1] = 0; //64;
+        (res.buf)[2] = 0; //64;
+        (res.buf)[3] = 0; //64;
+        INFO("Now replacing it with: %llu \n", htonll(*(res.buf)));
+        post_send(&res, IBV_WR_RDMA_WRITE, 0);
         sleep(2);
         poll_completion(&res);
 
-        *(res.buf) = htonll(39);
-        INFO("Now replacing it with: %llu \n", *(res.buf));
-        post_send(&res, IBV_WR_RDMA_WRITE);
+        (res.buf)[0] = 0; //64;
+        (res.buf)[1] = 2; //64;
+        (res.buf)[2] = 0; //64;
+        (res.buf)[3] = 0; //64;
+        
+        INFO("Now replacing it with: %llu \n", htonll(*(res.buf)));
+        post_send(&res, IBV_WR_RDMA_WRITE, 1);
         sleep(2);
         poll_completion(&res);
 
-        *(res.buf) = htonll(39030);
-        INFO("Now replacing it with: %llu \n", *(res.buf));
-        post_send(&res, IBV_WR_RDMA_WRITE);
+        (res.buf)[0] = 0; //64;
+        (res.buf)[1] = 0; //64;
+        (res.buf)[2] = 3; //64;
+        (res.buf)[3] = 0; //64;        INFO("Now replacing it with: %llu \n", htonll(*(res.buf)));
+        post_send(&res, IBV_WR_RDMA_WRITE, 2);
         sleep(2);
         poll_completion(&res);
+
+        (res.buf)[0] = 0; //64;
+        (res.buf)[1] = 0; //64;
+        (res.buf)[2] = 0; //64;
+        (res.buf)[3] = 4; //64;        INFO("Now replacing it with: %llu \n", htonll(*(res.buf)));
+        post_send(&res, IBV_WR_RDMA_WRITE, 3);
+        sleep(2);
+        poll_completion(&res);
+        
+        /*
+        uint64_t p = 0;
+        for(p = 0; p < 300000; p++) {
+            //*(res.buf) = htonll(p);
+            //INFO("Now replacing it with: %llu \n", htonll(*(res.buf)));
+            post_send(&res, IBV_WR_RDMA_WRITE, p%4);
+            //sleep(2);
+            poll_completion(&res);
+        }
+        */
+        
     }
 
     // sync so server will know that client is done mucking with its memory
     //sock_sync_data(res.sock, 1, "W", &temp_char);
     if (!config.server_name) {
+        //*(res.buf) = 1000;
+
         //unsigned long long i = 0;
-        unsigned long long i = 0;
+        //unsigned long long i = 0;
         while(1) {
-            INFO("Contents of server buffer: %llu \n", htonll(*(res.buf)));
+            INFO("Contents of server buffer: %llu \n", *(res.buf));
             sleep(1);
-            printf("buf = %llu , leading zeros = %llu \n", htonll(*(res.buf)), __builtin_clzll (htonll(*(res.buf))));
+            //printf("buf = %llu , leading zeros = %llu \n", *(res.buf), __builtin_clz(*(res.buf)));
+            int y = 0;
+            for(y = 0; y < 4 ; y++) {
+                printf("buf[%d] = %llu  ", y, (res.buf)[y]);
+            }
+            printf("\n");
             //if(i == 0) i++;
             //else i = i * 2;
+            if((res.buf)[3] == 4) break;
         }
     }
-    */
+
+    #endif
 
     // whatever
     //resources_destroy(&res);
-    printf("FINISHED INITIALIZING UC \n");
+    
+    printf("THE END \n");
+    
     return 0;
 }

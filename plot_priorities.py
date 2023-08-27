@@ -26,14 +26,22 @@ if input_dir[-1] == "/":
 
 path = input_dir.split("/")
 
+queues = 64
+trafficpatterns = ["PC", "SQ", "NC", "EXP"]
+#mechanisms = ["IDEAL", "SW", "INORDER", "LZCNT", "AVX","BLINDPOLL"]
+mechanisms = ["SW", "INORDER", "LZCNT", "BLINDPOLL", "IDEAL", "IDEALmany", "AVX"]
+
+
 priorities = 50
 # Creates a list containing 50 lists, each of 0 items, all set to 0
 w, h = 0, priorities
 
 load_list = [98078, 199196, 294768, 387378, 489066, 587130, 661236, 663783, 664703, 665868]
+p95PrioLatencies  = [[0 for x in range(w)] for y in range(h)]
 p99PrioLatencies  = [[0 for x in range(w)] for y in range(h)]
 p999PrioLatencies = [[0 for x in range(w)] for y in range(h)]
 
+p95Latencies = []
 p99Latencies = []
 p999Latencies = []
 
@@ -57,12 +65,14 @@ for result_file in file_list:
                     if row[1] != '':
                     #if float(row[5]) <= 200:
                         load_list.append(float(row[1])) # Convert to MRPS
-                        p99Latencies.append(float(row[3]))
-                        p999Latencies.append(float(row[4]))
+                        p95Latencies.append(float(row[3]))
+                        p99Latencies.append(float(row[4]))
+                        p999Latencies.append(float(row[5]))
                         for x in range(priorities):
                             #print(x, float(row[5+(2*x)]))
-                            p99PrioLatencies[x].append(float(row[5+(2*x)]))   
-                            p999PrioLatencies[x].append(float(row[6+(2*x)]))     
+                            p95PrioLatencies[x].append(float(row[7+(4*x)])) 
+                            p99PrioLatencies[x].append(float(row[8+(4*x)]))   
+                            p999PrioLatencies[x].append(float(row[9+(4*x)]))     
 
     #print(load_list)
     #print(p99_list)

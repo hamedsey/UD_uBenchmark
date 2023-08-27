@@ -69,7 +69,7 @@ public:
 	//const char                *servername = NULL;
 	unsigned int             connect_port = 18515;
 	int                      ib_port = 1;
-	uint64_t	             rx_depth = 16384;
+	uint64_t	             rx_depth = 16384; //maybe have a client thread per n connections
 	unsigned int             size = 20;//116;//20;
 	long long int   		 iters = 1000000;
 	long long int   		 sync_iters = 100000;
@@ -86,7 +86,7 @@ public:
   	char ib_devname [7] = "mlx5_3";
 	int gidx = 3;
 	int page_size = sysconf(_SC_PAGESIZE);
-	static const unsigned int bufs_num = 128;	
+	static const unsigned int bufs_num = 16384;
 	static const unsigned int sync_bufs_num = 1;
 
 	char * buf_recv [bufs_num];
@@ -95,12 +95,14 @@ public:
 	struct ibv_mr* mr_recv [bufs_num];
 	struct ibv_mr* mr_send [bufs_num];
 
-	uint64_t buf_usage_send [bufs_num];
-	uint64_t buf_usage_recv [bufs_num];
+	//uint64_t buf_usage_send [bufs_num];
+	//uint64_t buf_usage_recv [bufs_num];
 
 	int wr_id = 0;
 	bool received = false;
 	uint32_t dest_qpn;
+	uint64_t sentCount = 0;
+
 };
 
 #endif
