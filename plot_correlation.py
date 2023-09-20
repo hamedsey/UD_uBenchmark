@@ -175,13 +175,15 @@ args = parser.parse_args()
 
 
 priorities = 64
-trafficpatterns = ["PC", "EXP", "NC"]
+
+trafficpatterns = ["PC", "EXP"] #["PC", "EXP", "NC"]
 #mechanisms = ["IDEAL", "SW", "INORDER", "LZCNT", "AVX","BLINDPOLL"]
 #mechanisms = ["SW", "INORDER", "LZCNT", "BLINDPOLL", "IDEAL", "IDEALmany", "AVX"]
 #mechanisms = ["LZCNT"] 
 #mechanisms = ["LZCNT","SW3","INORDER3"]
-mechanisms = ["SW3", "INORDER3", "LZCNT", "IDEAL64"]
-
+#mechanisms = ["SW3", "INORDER3", "LZCNT", "IDEAL64"]
+#mechanisms = ["JLQ16SW64","16Q64P","16Q64P30"]
+mechanisms = ["dFCFS++"] #["SUPP"]
 
 #colors = ['#C5C9C7', '#C79FEF','#7BC8F6', '#030764']
 
@@ -241,7 +243,7 @@ for tp in trafficpatterns:
         satLatP99 = []
         satLatP95 = []
         priorityList = []
-        index = 6 #16 #for 700k load
+        index = 10 #10 #16 #for 700k load
         for x in range(priorities):
             priorityList.append(x)
             satLatP95.append(p95PrioLatencies[x][index])
@@ -251,19 +253,30 @@ for tp in trafficpatterns:
         #ax[0].axhline(y=p99Latencies[index], color='r', linestyle='-')
 
             #if(x % 5 == 0): 
-        ax[0].plot(priorityList, satLatP95, label=mechanism)
-        ax[1].plot(priorityList, satLatP99, label=mechanism)
         if mechanism == "SW3" or mechanism == "LZCNT": print(satLatP99)
         #ax[0].legend()
         #ax[1].legend()
 
+        print(priorityList)
+        print(satLatP95)
+        print(satLatP99)
+
         #Calculating Pearson's Correlation Coefficient
         my_rho = np.corrcoef(priorityList, satLatP99)
         print(my_rho)
+        ax[0].set_title(tp)#+"..."+str(my_rho[0][1]))#, fontsize=20)
+        ax[0].plot(priorityList, satLatP95, label=str(my_rho[0][1]))
+
+
+        my_rho = np.corrcoef(priorityList, satLatP999)
+        print(my_rho)
+        #ax[1].set_title(my_rho)#+"..."+str(my_rho[0][1]))#, fontsize=20)
+        ax[1].plot(priorityList, satLatP99, label=str(my_rho[0][1]))
+
 
     ax[0].legend()
     ax[1].legend()
-    ax[0].set_title(tp)#+"..."+str(my_rho[0][1]))#, fontsize=20)
+
 
     ax[0].set_ylabel('p95 latency (us)')
     ax[1].set_ylabel('p99 latency (us)')#, fontsize=20)
@@ -272,9 +285,8 @@ for tp in trafficpatterns:
     #ax[0].set_ylim([0, 1.01*max(satLatP95)])
     #ax[1].set_ylim([0, 1.01*max(satLatP99)])
 
-    #my_rho = np.corrcoef(priorityList, satLatP999)
-    #print(my_rho)
-    ax[1].set_title(tp)#+"..."+str(my_rho[0][1]))#, fontsize=20)
+    #ax[0].set_ylim([0, 200])
+    #ax[1].set_ylim([0, 200])
 
     #for 50
     #strict
@@ -287,11 +299,9 @@ for tp in trafficpatterns:
     #ax[0].set_ylim([0, 2e6])
 
     #ax[0].set_ylim([0, 120])
-    ax[1].set_ylim([0, 120])
+    #ax[1].set_ylim([0, 120])
 
     figure.set_size_inches(8, 8)
     #plt.show()
     #plt.savefig(input_dir+'/graph/'+path[1]+'_priority_plot.pdf')#,bbox_inches='tight')
-    plt.savefig("result/"+tp+"_prio_lat.pdf")#,bbox_inches='tight')
-
-
+    plt.savefig("result/"+tp+"_"+mechanism+"_prio_lat.pdf")#,bbox_inches='tight')

@@ -8,60 +8,10 @@ serverQpn=$(echo $2)
 #ib_devname=$(echo $5)
 #gid=$(echo $6)
 
-./disable_icrc.sh
+#./disable_icrc.sh
 #ping 192.168.1.5 -c 3
 #sleep 20
 mkdir $dirName
-
-echo performance > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu1/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu2/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu3/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu4/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu5/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu6/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu7/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu8/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu9/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu10/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu11/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu12/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu13/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu14/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu15/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu16/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu17/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu18/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu19/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu20/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu21/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu22/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu23/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu24/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu25/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu26/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu27/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu28/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu29/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu30/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu31/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu32/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu33/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu34/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu35/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu36/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu37/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu38/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu39/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu40/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu41/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu42/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu43/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu44/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu45/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu46/cpufreq/scaling_governor
-echo performance > /sys/devices/system/cpu/cpu47/cpufreq/scaling_governor
-
 
 
 : '
@@ -123,7 +73,7 @@ done
 '
 
 : '
-'
+#single core
 for queues in 64;do #8 16 32 64 128 256;do
     mkdir $dirName"/"$queues
     for dist in 5 6;do
@@ -162,6 +112,8 @@ for queues in 64;do #8 16 32 64 128 256;do
         done
     done
 done
+'
+
 : '
 for queues in 64;do #32 64 128 256;do
     mkdir $dirName"/"$queues
@@ -192,3 +144,44 @@ for queues in 64;do #32 64 128 256;do
     done
 done
 '
+
+#multi core
+for queues in 16;do #8 16 32 64 128 256;do
+    mkdir $dirName"/"$queues
+    for dist in 5 6 9;do
+        echo $dist
+        mkdir $dirName"/"$queues"/"$dist
+        for load in 1000000 2000000 4000000 8000000 12000000 16000000 18000000 20000000 22000000 24000000 26000000 28000000;do
+        #for load in 28000000;do
+        #for load in 100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000;do
+            echo $load
+            mkdir $dirName"/"$queues"/"$dist"/"$load
+            #sudo tcpdump -i enp24s0 -s 100 src 192.168.1.5 and dst port 4791 -w $dirName"/"$queues"/"$dist"/"$load"/"$load.pcap &
+            #if doing sq/one priority change n to one otherwise $queues 
+
+            ./UD_Client -w 16384 -t 12 -d $dirName"/"$queues"/"$dist"/"$load -v mlx5_0 -g 3 -m $dist -s 192.168.1.5 -l $load -q $serverQpn -n $queues >> $dirName"/"$queues"/"$dist"/"$load"/log.txt"
+            
+            drop=$(tail -n 1 $dirName"/"$queues"/"$dist"/"$load"/log.txt")
+            echo $drop
+            if [[ drop == 1 ]];then
+                echo "too many drops!"
+            fi
+
+            sleep 5
+            ((serverQpn+=512))
+            #sudo kill -15 $(pgrep "tcpdump")
+            #mv $dirName"/"$queues"/"$dist"/"$load"/"$load.pcap $dirName"/"$queues"/"$dist"/"$load"/"$rps.pcap 
+
+            #./UD_Client -w $windowSize -t $threadNum -d $dirName"_r"$ratio"_p"$percent -v $ib_devname -g $gid -q $serverQpn -m $servTimeDist -s $serverIPAddr -r $ratio -p $percent >> runlog.txt
+            #if [[ rps == 0 ]];then
+            #	rps=$(tail -n 1 runlog.txt)
+            #else
+            #    rps_prev=$rps
+            #    rps=$(tail -n 1 runlog.txt)
+                #if [[ rps -lt rps_prev*97/100 ]];then
+                    #break 2
+                #fi
+            #fi
+        done
+    done
+done

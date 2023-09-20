@@ -19,7 +19,7 @@
 #include <unistd.h>
 #include <malloc.h>
 
-#define SHARED_CQ 1
+#define SHARED_CQ 0
 //if FPGA_NOTIFICATION is 1, this should be zero
 
 #define USE_SRQ 0
@@ -93,7 +93,7 @@ public:
 	void gid_to_wire_gid(const union ibv_gid *gid, char wgid[]);
 
 	struct pingpong_context* pp_init_ctx(struct ibv_device *ib_dev, int rx_depth, int port, int use_event, int id, uint64_t numQueues, uint64_t numThreads);
-	int pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues, uint64_t numThreads);
+	int pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues, uint64_t numThreads, uint64_t thread_num);
 	int pp_post_recv(struct pingpong_context *ctx, int wr_id);
 	struct pingpong_dest* pp_server_exch_dest(char *servername);
 	int pp_connect_ctx(struct pingpong_context *ctx, int port, int my_psn, int sl, int sgid_idx, int id);

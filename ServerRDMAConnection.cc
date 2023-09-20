@@ -145,7 +145,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 			printf("cqDepth = %llu \n", cqDepth);
 			ctxGlobal->cq = (struct ibv_cq **)malloc(numThreads*sizeof(struct ibv_cq *));
 			for(uint8_t t = 0; t < numThreads; t++) {
-				printf("t = = %llu \n", t);
+				//printf("t = = %llu \n", t);
 				ctxGlobal->cq[t] = ibv_create_cq(ctxGlobal->context, cqDepth, NULL, ctxGlobal->channel, 0);
 				if (!ctxGlobal->cq[t]) {
 					fprintf(stderr, "Couldn't create CQ\n");
@@ -198,6 +198,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 		memset(&init_attr, 0, sizeof(init_attr));
 				
 		#if SHARED_CQ
+			//printf("id = %llu, cqid = %llu \n", id, id%numThreads);
 			init_attr.send_cq = ctxGlobal->cq[id%numThreads];
 			init_attr.recv_cq = ctxGlobal->cq[id%numThreads];
 		#else
@@ -344,7 +345,7 @@ int RDMAConnection::pp_post_recv(struct pingpong_context *ctx, int wr_id)
 
 }
 
-int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues, uint64_t numThreads)
+int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueues, uint64_t numThreads, uint64_t thread_num)
 {
 	//for(int i = 0; i < numQueues; i++){
 		if (ibv_destroy_qp(ctx->qp)) {
@@ -366,43 +367,45 @@ int RDMAConnection::pp_close_ctx(struct pingpong_context *ctx, uint64_t numQueue
 		}	
 	#endif
 
-
-	for (int j = 0; j<recv_bufs_num; j++) {
-		if (ibv_dereg_mr(mr_recv[j])) {
-			fprintf(stderr, "Couldn't deregister MR\n");
-			return 1;
-		}
-		if (ibv_dereg_mr(mr_send[j])) {
-			fprintf(stderr, "Couldn't deregister MR\n");
-			return 1;
-		}
-	}
-
 	if (ibv_destroy_ah(ctx->ah)) {
 		fprintf(stderr, "Couldn't destroy AH\n");
 		return 1;
 	}
 
-	if (ibv_dealloc_pd(ctxGlobal->pd)) {
-		fprintf(stderr, "Couldn't deallocate PD\n");
-		return 1;
-	}
-
-	if (ctxGlobal->channel) {
-		if (ibv_destroy_comp_channel(ctxGlobal->channel)) {
-			fprintf(stderr, "Couldn't destroy completion channel\n");
+	if(thread_num == 0) {
+		for (int j = 0; j<recv_bufs_num; j++) {
+			if (ibv_dereg_mr(mr_recv[j])) {
+				fprintf(stderr, "Couldn't deregister MR\n");
+				return 1;
+			}
+			if (ibv_dereg_mr(mr_send[j])) {
+				fprintf(stderr, "Couldn't deregister MR\n");
+				return 1;
+			}
+		}
+		
+		if (ibv_dealloc_pd(ctxGlobal->pd)) {
+			fprintf(stderr, "Couldn't deallocate PD\n");
 			return 1;
 		}
-	}
 
-	if (ibv_close_device(ctxGlobal->context)) {
-		fprintf(stderr, "Couldn't release context\n");
-		return 1;
-	}
+		if (ctxGlobal->channel) {
+			if (ibv_destroy_comp_channel(ctxGlobal->channel)) {
+				fprintf(stderr, "Couldn't destroy completion channel\n");
+				return 1;
+			}
+		}
 
-	for (int j = 0; j<recv_bufs_num; j++) {
-		free(buf_recv[j]);
-		free(buf_send[j]);
+		if (ibv_close_device(ctxGlobal->context)) {
+			fprintf(stderr, "Couldn't release context\n");
+			return 1;
+		}
+		
+
+		for (int j = 0; j<recv_bufs_num; j++) {
+			free(buf_recv[j]);
+			free(buf_send[j]);
+		}
 	}
 
 	free(ctx);

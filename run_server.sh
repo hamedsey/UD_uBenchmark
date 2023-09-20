@@ -40,8 +40,8 @@ sudo /etc/init.d/openibd restart
 sudo modprobe mlx_accel_tools
 sudo mst start --with_fpga
 sudo /./opt/Xilinx/Vivado/2016.2/bin/hw_serverpv
-sudo mlx_fpga -d /dev/mst/mt4117_pciconf0_fpga_rdma query
 sudo mlx_fpga -d /dev/mst/mt4117_pciconf0_fpga_rdma load --factory
+sudo mlx_fpga -d /dev/mst/mt4117_pciconf0_fpga_rdma query
 sudo mcra /dev/mst/mt4117_pciconf0 0x5363c.12:1 0
 sudo mcra /dev/mst/mt4117_pciconf0 0x5367c.12:1 0
 sudo mcra /dev/mst/mt4117_pciconf0 0x53628.3:1 0
@@ -103,6 +103,7 @@ echo performance > /sys/devices/system/cpu/cpu45/cpufreq/scaling_governor
 echo performance > /sys/devices/system/cpu/cpu46/cpufreq/scaling_governor
 echo performance > /sys/devices/system/cpu/cpu47/cpufreq/scaling_governor
 
+: '
 for queues in 64;do #1 8 16 32 64 128 256;do
     #mkdir $dirName"/"$queues
     for dist in 6 7 9;do #5 7 9 6 8;do
@@ -129,3 +130,35 @@ for queues in 64;do #1 8 16 32 64 128 256;do
         done
     done
 done
+'
+
+#for priorities in 64;do #1 8 16 32 64 128 256;do
+#for queues in 64;do #1 8 16 32 64 128 256;do
+for queues in 16;do #8 16 32 64 128 256;do
+    #mkdir $dirName"/"$queues
+    for dist in 5 6 9;do #5 7 9 6 8;do
+        #mkdir $dirName"/"$queues"/"$dist
+        for load in 1000000 2000000 4000000 8000000 12000000 16000000 18000000 20000000 22000000 24000000 26000000 28000000;do
+        #for load in 28000000;do
+        #for load in 100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000;do
+            #./UD_Server -s 192.168.1.20 -g 4 -v mlx5_0 -t 1 -q $queues -n $queues -b 100
+            ./UD_Server -s 192.168.1.20 -g 4 -v mlx5_0 -t 16 -q $queues -n $queues -b 100
+
+            #sudo kill -15 $(pgrep "tcpdump")
+
+            #./UD_Client -w $windowSize -t $threadNum -d $dirName"_r"$ratio"_p"$percent -v $ib_devname -g $gid -q $serverQpn -m $servTimeDist -s $serverIPAddr -r $ratio -p $percent >> runlog.txt
+            #if [[ rps == 0 ]];then
+            #	rps=$(tail -n 1 runlog.txt)
+            #else
+            #    rps_prev=$rps
+            #    rps=$(tail -n 1 runlog.txt)
+                #if [[ rps -lt rps_prev*97/100 ]];then
+                    #break 2
+                #fi
+            #fi
+        done
+    done
+done
+#done
+
+

@@ -58,13 +58,15 @@
 //if SHARED_CQ is 1, this should be zero (for strict policy)
 
 #define PROCESS_IN_ORDER 0
-#define STRICT_PRIORITY 1
+#define STRICT_PRIORITY 0
 #define ROUND_ROBIN 0
 #define WEIGHTED_ROUND_ROBIN 0
 #define ASSERT 0  //should be same as REORDER pragma in client //disable if using SRQ (shared receive queue)
 #define PRINT 0
 
 #define IDEAL 0 //enable shared CQ with this
+
+#define SCALEOUT 0
 
 
 			//1000
@@ -87,6 +89,10 @@ uint64_t numberOfPriorities = 0;
 uint32_t * all_rcnts;
 uint32_t * all_scnts;
 vector<RDMAConnection *> connections;
+
+pthread_barrier_t barrier; 
+pthread_barrierattr_t attr;
+int ret; 
 
 
 #if COUNT_IDLE_POLLS
@@ -119,9 +125,9 @@ uint64_t count64 = 0;
 uint64_t count01 = 0;
 uint64_t count11 = 0;
 uint64_t countOther = 0;
-uint64_t idlePolls = 0;
+//uint64_t idlePolls = 0;
 
-uint64_t *countPriority;
+uint64_t **countPriority;
 
 void     INThandler(int);
 
@@ -200,7 +206,7 @@ void  INThandler(int sig)
      signal(sig, SIG_IGN);
 
 	printf("count64= %llu, countOther = %llu, count01= %llu, count11= %llu , rcnt = %llu \n", count64, countOther, count01, count11, connections[0]->rcnt);
-	printf("idle polls = %llu \n", idlePolls);
+	//printf("idle polls = %llu \n", idlePolls);
 	#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
 		printf("avg = %f, \n ", (float(execution_time_cycles)/elapsedExecutionTimeMeasurements));
 	#endif
@@ -270,7 +276,7 @@ void* server_threadfunc(void* x) {
 		double pollTime = 0.0;
 	#endif
 
-	uint16_t signalInterval = (conn->rx_depth-recv_bufs_num)/2;
+	uint16_t signalInterval = (conn->rx_depth-recv_bufs_num)/16;
 	if(recv_bufs_num > conn->rx_depth) signalInterval = (recv_bufs_num-conn->rx_depth)/2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ;
 	printf("signalInterval = %llu, rx_depth = %llu, recvbufsnum = %llu, num_bufs = %llu \n",signalInterval, conn->rx_depth, recv_bufs_num, num_bufs);
 	int16_t priority = -1;
@@ -317,7 +323,7 @@ void* server_threadfunc(void* x) {
 	uint64_t i = 0;
 	uint64_t j = 0;
 	uint64_t a = 0;
-
+	bool firstPoll = true;
 	signal(SIGINT, INThandler);	
 
 	//__m512i zero = 0;
@@ -353,6 +359,9 @@ void* server_threadfunc(void* x) {
 		uint64_t leadingZerosinValue;
 		uint8_t resultIndexWorkFound;
 	#endif
+	//printf("hello \n");
+	ret = pthread_barrier_wait(&barrier);
+
 
 	while (terminateRun == false) {
 		#if RR_POLL
@@ -514,7 +523,7 @@ void* server_threadfunc(void* x) {
 
 
 			/////////////////////////////////Multi Queue - lzcnt //////////////////////////////////////////////
-			#if 1
+			#if 0
 			uint32_t byteFlipMask = 0x00000000;
 			for (i = 0; i < NUM_QUEUES; i += 8) {
 
@@ -566,7 +575,7 @@ void* server_threadfunc(void* x) {
 
 			//}
 			#endif
-			//////////////////////////////////////////AVX////////////////////////////////////////////////
+			//////////////////////////////////////////AVX512////////////////////////////////////////////////
 			//the work item goes to queue n
 			//the notification goes to byte n ^ 7
 			#if 0
@@ -660,7 +669,101 @@ void* server_threadfunc(void* x) {
 			//printf(" - buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
 			#endif
 			////////////////////////////////////////////////////////////////////////////////////////////
-			/////////////////////////////////////////////////////////////////////////////////////////////
+			//////////////////////////////////////////AVX256////////////////////////////////////////////////
+			//the work item goes to queue n
+			//the notification goes to byte n ^ 7
+			#if 1
+			#if debugFPGA
+			for (int j = 0; j < 64; ++j) {
+				//array[j] = 0x01;
+				printf("%x ",res.buf[j]);
+			}
+			printf("\n");
+			#endif
+			uint32_t byteFlipMask = 0x00000007;
+			uint8_t resultIndexWorkFound = 0;
+			//for (int zz = 0; zz < 10; zz++) {
+			for (i = 0; i < NUM_QUEUES; i += 32) {
+				resultIndexWorkFound = 0;
+				// Load 32 bytes (256 bits) from the input array
+				//__m256i values = _mm256_loadu_si256(reinterpret_cast<__m256i*>(res.buf + i));
+
+				#if debugFPGA
+				printf("before load \n");
+				#endif
+				//volatile __m512i values = _mm512_loadu_si512((const void *)(reinterpret_cast<volatile __m512i*>(res.buf + i)));
+				volatile __m256i values = _mm256_loadu_si256((const __m256i *)(reinterpret_cast<volatile __m256i*>(res.buf + i)));
+				//volatile __m256i values = (reinterpret_cast<volatile __m256i*>(res.buf + i));
+
+				// Perform the leading zero operation on the wide values
+				#if debugFPGA
+				printf("before lzcnt \n");
+				#endif
+	
+				__m256i leadingZeros = _mm256_lzcnt_epi64(values);
+
+				#if debugFPGA
+				printf("before store \n");
+				#endif
+
+				// Store the leading zeros count in an array for printing
+				_mm256_store_si256(reinterpret_cast<__m256i*>(result), leadingZeros);
+
+				// Print the leading zeros count for each 32-bit integer
+				#if debugFPGA
+				std::cout << "Leading Zeros 1: ";
+				for (int j = 0; j < 4; ++j) {
+					std::cout << result[j] << " ";
+				}
+				std::cout << std::endl;
+				#endif
+
+				for (j = 0; j < 4; j++) {
+					if(result[j] != 64) {
+						foundWork = true;
+						resultIndexWorkFound = result[j];
+						connIndex = i + (8*j) + (resultIndexWorkFound/8);
+						//printf("connIndex = %llu \n", connIndex);
+						#if debugFPGA
+						printf("found work... i = %llu j = %llu, result[j] = %llu \n", i, j, resultIndexWorkFound);
+						#endif
+	
+						#if debugFPGA
+						printf("connIndex = %llu \n", connIndex);
+						#endif
+
+						conn = connections[connIndex];
+						//printf(" - buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+						(res.buf)[connIndex^byteFlipMask] = 0x00;
+						if(processBufB4Polling[connIndex] != NULL && processBufB4PollingSrcQP[connIndex] != NULL) {
+							#if debugFPGA
+							printf("found work item from previous iter, process that \n");
+							#endif
+
+							bufID = (processBufB4Polling[connIndex]);
+							srcQP = (processBufB4PollingSrcQP[connIndex]);
+							received = true;
+							//printf("going straight to process \n");
+							goto process;
+						}
+						//else printf("going to poll queue \n");
+						break;
+					}
+
+				}
+				if (foundWork == true) break;
+				//0x0000000000000000 leading zeros = 64
+				//0xFFFFFFFFFFFFFFFF leading zeros = 0
+				//0x0000000000000000 leading zeros = 64
+				//0xFFFFFFFFFFFFFFFF leading zeros = 0
+			}
+			//}
+			if (foundWork == false) continue;
+			//else {
+			//}
+			//printf(" - buf[%llu] = %llu \n",connIndex^byteFlipMask, (res.buf)[connIndex^byteFlipMask]);
+			#endif
+			////////////////////////////////////////////////////////////////////////////////////////////
 			////////////////////////////////////AVX-Optimized////////////////////////////////////////////
 			#if 0
 			uint32_t byteFlipMask = 0x00000007;
@@ -901,6 +1004,38 @@ void* server_threadfunc(void* x) {
 
 				//printf("polled ne = %d \n",ne);
 
+
+				//if(totalPolls[thread_num] ==  0xFFFFFFFFFFFFFFFF) totalPollMSBs[thread_num]++;
+				//else 
+				#if COUNT_IDLE_POLLS
+					if(receivedFirstOne == false) {
+						if(ne > 0) {
+							uint64_t buf = (uint64_t)wc[0].wr_id;
+							if(buf > num_bufs) {
+								//printf("buf = %llu \n",buf);
+								uint8_t byte = (uint8_t)buf_recv[buf-num_bufs][43];
+								//printf("byte = %llu \n",byte);
+								if(byte == 255) {
+									receivedFirstOne = true;	
+									totalPolls[thread_num] = 0;
+									idlePolls[thread_num] = 0;
+								}
+							}
+						}
+					}
+					else {
+						totalPolls[thread_num]++;
+
+						if(ne == 0) {
+							if(idlePolls[thread_num] == 0xFFFFFFFFFFFFFFFF) printf("idle wrapped\n"); //idlePolls[thread_num]++;
+							//else 
+							idlePolls[thread_num]++;
+						}
+					}
+					//printf("idle  = %llu \n", idlePolls[thread_num]);
+
+				#endif
+
 				#if MEAS_POLL_LAT
 					clock_gettime(CLOCK_MONOTONIC,&endPoll);	
 					if(rcnt >= MEAS_POLL_LAT_WARMUP) {
@@ -945,9 +1080,30 @@ void* server_threadfunc(void* x) {
 
 				#if !SHARED_CQ
 				if(ne == 0) {
-					#if STRICT_POLL
-						if(offset == NUM_QUEUES-1) offset = 0;
-						else offset++;	
+					#if STRICT_POLL	
+						#if SCALEOUT //for scaleout 
+							if(offset > (NUM_THREADS*((NUM_QUEUES/NUM_THREADS)-1))-1) offset = thread_num;
+							else offset += NUM_THREADS;
+							/*
+							if(offset >= NUM_THREADS) {
+								offset = thread_num;
+								firstPoll = true;
+							}
+							else {
+								if(firstPoll == true) {
+									offset = offset;
+									firstPoll = false;
+								}
+								else {
+									if(offset < NUM_THREADS/2) offset += NUM_THREADS;
+									else offset += NUM_THREADS/2;
+								}
+							}
+							*/
+						#else //for scale up (SUPP)
+							if(offset == NUM_QUEUES-1) offset = 0;
+							else offset++;
+						#endif
 					#endif
 					continue;
 				}
@@ -956,29 +1112,6 @@ void* server_threadfunc(void* x) {
 				if (ne < 0) {
 					fprintf(stderr, "poll CQ failed %d\n", ne);
 				}
-
-				//if(totalPolls[thread_num] ==  0xFFFFFFFFFFFFFFFF) totalPollMSBs[thread_num]++;
-				//else 
-				#if COUNT_IDLE_POLLS
-					if(receivedFirstOne == false) {
-						if(ne > 0) {
-							receivedFirstOne = true;	
-							totalPolls[thread_num] = 0;
-							idlePolls[thread_num] = 0;
-						}
-					}
-					else {
-						totalPolls[thread_num]++;
-
-						if(ne == 0) {
-							if(idlePolls[thread_num] == 0xFFFFFFFFFFFFFFFF) printf("idle wrapped\n"); //idlePolls[thread_num]++;
-							//else 
-							idlePolls[thread_num]++;
-						}
-					}
-					//printf("idle  = %llu \n", idlePolls[thread_num]);
-
-				#endif
 
 			//} while (!conn->use_event && ne < 1);
 		#endif
@@ -1056,7 +1189,12 @@ void* server_threadfunc(void* x) {
 					#if STRICT_POLL
 						//if(offset == NUM_QUEUES-1) printf("offset = %llu \n",NUM_QUEUES-1);
 						//countPriority[offset]++;
-						offset = 0;
+												
+						#if SCALEOUT //for scaleout 
+							offset = thread_num;
+						#else //for scale up (SUPP)
+							offset = 0;
+						#endif
 					#endif	
 
 					#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
@@ -1361,14 +1499,47 @@ process:
 				//printf("packet sequence number = %lu , sequence number in BV = %lu \n", sequence_number, sequenceNumberInBV);
 			#endif
 
-			countPriority[(uint8_t)buf_recv[bufID-num_bufs][50]]++;
+			countPriority[thread_num][(uint8_t)buf_recv[bufID-num_bufs][50]]++;
             uint8_t sleep_int_lower = (uint)buf_recv[bufID-num_bufs][41];
             uint8_t sleep_int_upper = (uint)buf_recv[bufID-num_bufs][40];	
 
-            //uint8_t checkByte2 = (uint)buf_recv[bufID-num_bufs][42];	
+            uint8_t checkByte2 = (uint)buf_recv[bufID-num_bufs][42];	
             uint8_t checkByte3 = (uint)buf_recv[bufID-num_bufs][43];	
-			if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte3 == 255) {
-				for(int g = 0; g < numberOfPriorities; g++) printf("%llu \n",countPriority[g]);
+			if(checkByte2 == 255 && checkByte3 == 255) {
+				#if COUNT_IDLE_POLLS
+					//if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
+						printf("printing idle polls of all threads \n");
+						double avgIdlePolls = 0.0;
+						for(unsigned int i = 0; i < NUM_THREADS; i++) {
+							//printf("idle polls  = %llu \n", idlePolls[i]);
+							//printf("total polls = %llu \n", totalPolls[i]);
+							printf("%f, \n ", float(idlePolls[i])/float(totalPolls[i]));
+							printf("\n");
+							avgIdlePolls += float(idlePolls[i])/float(totalPolls[i]);
+						}
+						printf("\n \n");
+						printf("avg = %f, \n ", float(avgIdlePolls)/NUM_THREADS);
+						//printf("rcnt = %d \n",rcnt);
+						//printf("scnt = %d \n",scnt);
+						//rcnt = 0;
+						//scnt = 0;
+					//}
+				#endif
+
+				#if MEAS_POLL_LAT
+					//if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
+						printf("avg polls time of all threads \n");
+						double sumAllPollTimes = 0.0;
+						for(unsigned int i = 0; i < NUM_THREADS; i++) {
+							printf("%f, \n ", float(sumPollTime[i])/float(totalPolls[i]));
+							sumAllPollTimes += float(sumPollTime[i])/float(totalPolls[i]);
+						}
+						printf("\n \n");
+						printf("avg = %f, \n ", float(sumAllPollTimes)/NUM_THREADS);
+					//}
+				#endif
+
+				printf("terminating run \n");
 				terminateRun = true;
 				break;
 			}
@@ -1400,37 +1571,7 @@ process:
 				//if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) printf("notificationCount = %llu \n", notifCount);
             #endif
 
-            #if COUNT_IDLE_POLLS
-                if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
-                    printf("printing idle polls of all threads \n");
-                    double avgIdlePolls = 0.0;
-                    for(unsigned int i = 0; i < NUM_THREADS; i++) {
-                        printf("idle polls  = %llu \n", idlePolls[i]);
-                        printf("total polls = %llu \n", totalPolls[i]);
-                        printf("%f, \n ", float(idlePolls[i])/float(totalPolls[i]));
-                        printf("\n");
-                        avgIdlePolls += float(idlePolls[i])/float(totalPolls[i]);
-                    }
-                    printf("\n \n");
-                    printf("avg = %f, \n ", float(avgIdlePolls)/NUM_THREADS);
-                    printf("rcnt = %d \n",rcnt);
-                    printf("scnt = %d \n",scnt);
-                    rcnt = 0;
-                    scnt = 0;
-                }
-            #endif
 
-            #if MEAS_POLL_LAT
-                if(sleep_int_lower == 0 && sleep_int_upper == 0 && checkByte2 == 255 && checkByte3 == 255) {
-                    printf("avg polls time of all threads \n");
-                    double sumAllPollTimes = 0.0;
-                    for(unsigned int i = 0; i < NUM_THREADS; i++) {
-                        sumAllPollTimes += float(sumPollTime[i])/float(totalPolls[i]);
-                    }
-                    printf("\n \n");
-                    printf("avg = %f, \n ", float(sumAllPollTimes)/NUM_THREADS);
-                }
-            #endif
 
             conn->routs += !(conn->pp_post_recv(conn->ctx, bufID));
             //if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
@@ -1645,21 +1786,19 @@ process:
 	#endif
 	*/
 
-
-
-
-
 	//if (scnt != rcnt) fprintf(stderr, "Different send counts and receive counts for thread %d\n", thread_num);
 
         all_rcnts[thread_num] = rcnt;
         all_scnts[thread_num] = scnt;
 
-	if (conn->pp_close_ctx(conn->ctx, NUM_QUEUES, NUM_THREADS)) {
-		printf("close ctx returned 1\n");
-	}
+	if(thread_num == 0) {
+		if (conn->pp_close_ctx(conn->ctx, NUM_QUEUES, NUM_THREADS, thread_num)) {
+			printf("close ctx returned 1\n");
+		}
 
-	ibv_free_device_list(conn->dev_list);
-	//free(conn->rem_dest);
+		ibv_free_device_list(conn->dev_list);
+		//free(conn->rem_dest);
+	}
 
 	return 0;
 }
@@ -1760,6 +1899,9 @@ int main(int argc, char *argv[])
 	*/
 ////
 
+	ret = pthread_barrier_init(&barrier, &attr, NUM_THREADS);
+	assert(ret == 0);
+
 	recv_bufs_num = buffersPerQ*NUM_QUEUES;
 	bufsPerQP = recv_bufs_num/NUM_QUEUES;
 	printf("bufsPerQP = %llu, recv_bufs_num = %llu \n",bufsPerQP, recv_bufs_num);
@@ -1774,8 +1916,12 @@ int main(int argc, char *argv[])
 
 	all_rcnts = (uint32_t*)malloc(NUM_THREADS*sizeof(uint32_t));
 	all_scnts = (uint32_t*)malloc(NUM_THREADS*sizeof(uint32_t));
-	countPriority = (uint64_t *)malloc(numberOfPriorities*sizeof(uint64_t));
-	for(int g = 0; g < numberOfPriorities; g++) countPriority[g] = 0;
+	countPriority = (uint64_t **)malloc(NUM_THREADS*sizeof(uint64_t *));
+
+	for(int t = 0; t < NUM_THREADS; t++) {
+		countPriority[t] = (uint64_t *)malloc(numberOfPriorities*sizeof(uint64_t));
+		for(int g = 0; g < numberOfPriorities; g++) countPriority[t][g] = 0;
+	}
 
 	#if COUNT_IDLE_POLLS
 		idlePolls = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
@@ -1810,8 +1956,28 @@ int main(int argc, char *argv[])
 	uint32_t total_scnt = 0;
 
 	for(int i = 0; i < NUM_THREADS; i++){
+			//printf("allrcnt[%d] = %llu \n", i, all_rcnts[i]);
             total_rcnt += all_rcnts[i];
             total_scnt += all_scnts[i];
 	}
+
+	uint64_t *totalPerThread = (uint64_t *)malloc(NUM_THREADS*sizeof(uint64_t));
+	for(int t = 0; t < NUM_THREADS; t++) totalPerThread[t] = 0;
+
+	for(int g = 0; g < numberOfPriorities; g++) {
+		printf("P%llu   ",g);
+
+		for(int t = 0; t < NUM_THREADS; t++){
+			totalPerThread[t] += countPriority[t][g];
+			printf("%llu   ",countPriority[t][g]);
+		}
+		printf("\n");
+	}
+	printf("\n");
+	printf("total per thread ... \n");
+	for(int t = 0; t < NUM_THREADS; t++){
+		printf("%llu   ",totalPerThread[t]);
+	}
+	printf("\n");
 	printf("total rcnt = %d, total scnt = %d \n",(int)total_rcnt,(int)total_scnt);
 }

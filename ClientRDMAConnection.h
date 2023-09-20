@@ -75,7 +75,7 @@ public:
 	long long int   		 sync_iters = 100000;
 	int                      use_event = 0;
 	uint64_t             	 routs, souts;
-	uint64_t             	 rcnt, scnt = 0;
+	uint64_t             	 rcnt, scnt, postWarmupSends, postWarmupRecvs = 0;
 	int                      num_cq_events = 0;
 	int                      sl = 0;
 	char			 		 gid[33];
