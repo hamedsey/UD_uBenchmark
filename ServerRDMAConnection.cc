@@ -144,7 +144,11 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 			uint64_t cqDepth = 2*numQueues*buffersPerQ + 1;
 			printf("cqDepth = %llu \n", cqDepth);
 			ctxGlobal->cq = (struct ibv_cq **)malloc(numThreads*sizeof(struct ibv_cq *));
+			#if SINGLE_CENTRAL_CQ
+			for(uint8_t t = 0; t < 1; t++) {
+			#else
 			for(uint8_t t = 0; t < numThreads; t++) {
+			#endif
 				//printf("t = = %llu \n", t);
 				ctxGlobal->cq[t] = ibv_create_cq(ctxGlobal->context, cqDepth, NULL, ctxGlobal->channel, 0);
 				if (!ctxGlobal->cq[t]) {
@@ -199,8 +203,13 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 				
 		#if SHARED_CQ
 			//printf("id = %llu, cqid = %llu \n", id, id%numThreads);
+			#if SINGLE_CENTRAL_CQ
+			init_attr.send_cq = ctxGlobal->cq[0];
+			init_attr.recv_cq = ctxGlobal->cq[0];
+			#else
 			init_attr.send_cq = ctxGlobal->cq[id%numThreads];
 			init_attr.recv_cq = ctxGlobal->cq[id%numThreads];
+			#endif
 		#else
 			init_attr.send_cq = ctx->cq;
 			init_attr.recv_cq = ctx->cq;

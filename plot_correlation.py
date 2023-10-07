@@ -176,7 +176,7 @@ args = parser.parse_args()
 
 priorities = 64
 
-trafficpatterns = ["PC", "EXP"] #["PC", "EXP", "NC"]
+trafficpatterns = ["FB"]#, "PC", "EXP"] #["PC", "EXP", "NC"]
 #mechanisms = ["IDEAL", "SW", "INORDER", "LZCNT", "AVX","BLINDPOLL"]
 #mechanisms = ["SW", "INORDER", "LZCNT", "BLINDPOLL", "IDEAL", "IDEALmany", "AVX"]
 #mechanisms = ["LZCNT"] 
@@ -184,13 +184,15 @@ trafficpatterns = ["PC", "EXP"] #["PC", "EXP", "NC"]
 #mechanisms = ["SW3", "INORDER3", "LZCNT", "IDEAL64"]
 #mechanisms = ["JLQ16SW64","16Q64P","16Q64P30"]
 mechanisms = ["dFCFS++"] #["SUPP"]
+mechanisms = ["64QP16CQ16T","64QP16CQ16Tlocalprio","64QP16CQ16Tglobalprio","64QP64CQ16TSUPP","64QP64CQ16TRRCAP"]
+legend = ["no prioritizing (ideal)", "local prioritizing", "global prioritizing","scale-up","ceiling64"]
 
 #colors = ['#C5C9C7', '#C79FEF','#7BC8F6', '#030764']
 
 for tp in trafficpatterns:
     figure, ((ax)) = plt.subplots(2, 1)
     print(tp)
-
+    i = 0
     for mechanism in mechanisms:
         print(mechanism)
         if(mechanism == "IDEAL"): result_file = "result/"+mechanism+"/SQ-result.csv"
@@ -243,7 +245,7 @@ for tp in trafficpatterns:
         satLatP99 = []
         satLatP95 = []
         priorityList = []
-        index = 10 #10 #16 #for 700k load
+        index = 5 #10 #16 #for 700k load
         for x in range(priorities):
             priorityList.append(x)
             satLatP95.append(p95PrioLatencies[x][index])
@@ -265,13 +267,14 @@ for tp in trafficpatterns:
         my_rho = np.corrcoef(priorityList, satLatP99)
         print(my_rho)
         ax[0].set_title(tp)#+"..."+str(my_rho[0][1]))#, fontsize=20)
-        ax[0].plot(priorityList, satLatP95, label=str(my_rho[0][1]))
+        ax[0].plot(priorityList, satLatP95, label=legend[i]+' '+str(my_rho[0][1]))
 
 
         my_rho = np.corrcoef(priorityList, satLatP999)
         print(my_rho)
         #ax[1].set_title(my_rho)#+"..."+str(my_rho[0][1]))#, fontsize=20)
-        ax[1].plot(priorityList, satLatP99, label=str(my_rho[0][1]))
+        ax[1].plot(priorityList, satLatP99, label=legend[i]+' '+str(my_rho[0][1]))
+        i = i + 1
 
 
     ax[0].legend()
@@ -285,8 +288,8 @@ for tp in trafficpatterns:
     #ax[0].set_ylim([0, 1.01*max(satLatP95)])
     #ax[1].set_ylim([0, 1.01*max(satLatP99)])
 
-    #ax[0].set_ylim([0, 200])
-    #ax[1].set_ylim([0, 200])
+    ax[0].set_ylim([0, 2000])
+    ax[1].set_ylim([0, 2000])
 
     #for 50
     #strict
@@ -304,4 +307,4 @@ for tp in trafficpatterns:
     figure.set_size_inches(8, 8)
     #plt.show()
     #plt.savefig(input_dir+'/graph/'+path[1]+'_priority_plot.pdf')#,bbox_inches='tight')
-    plt.savefig("result/"+tp+"_"+mechanism+"_prio_lat.pdf")#,bbox_inches='tight')
+    plt.savefig("result/"+tp+"_64Q16T"+"_prio_lat_2000.pdf")#,bbox_inches='tight')

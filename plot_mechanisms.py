@@ -33,7 +33,7 @@ path = input_dir.split("/")
 
 queues = 64
 #trafficpatterns = ["FB", "PC", "SQ", "EXP"]
-trafficpatterns = ["FB", "PC"]
+trafficpatterns = ["FB"]#, "PC", "EXP"]
 
 
 #mechanisms = ["IDEAL", "SW", "INORDER", "LZCNT", "AVX","BLINDPOLL"]
@@ -47,8 +47,10 @@ trafficpatterns = ["FB", "PC"]
 #mechanisms = ["SW", "LZCNT", "IDEAL64"]
 
 #mechanisms = ["SW8Q8X2", "LZCNT8Q8X", "SW8Q8X", "SW8Q8F2", "LZCNT8Q8F", "SW8Q8F"]
-mechanisms = ["SW8Q8X2", "LZCNT8Q8X", "SW8Q8F2", "LZCNT8Q8F"]
+#mechanisms = ["SW8Q8X2", "LZCNT8Q8X", "SW8Q8F2", "LZCNT8Q8F"]
 
+mechanisms = ["64QP16CQ16T","64QP16CQ16Tlocalprio","64QP16CQ16Tglobalprio","64QP64CQ16TSUPP","64QP64CQ16TRRCAP"]
+legend = ["no prioritizing (ideal)", "local prioritizing", "global prioritizing","scale-up", "ceiling64"]
 
 #priorities = 50
 # Creates a list containing 50 lists, each of 0 items, all set to 0
@@ -66,6 +68,7 @@ mechanisms = ["SW8Q8X2", "LZCNT8Q8X", "SW8Q8F2", "LZCNT8Q8F"]
 for tp in trafficpatterns:
     figure, ((ax)) = plt.subplots(2, 1)
     print(tp)
+    i = 0
     for mechanism in mechanisms:
         print(mechanism)
         if(mechanism == "IDEAL" or mechanism == "IDEAL64" or mechanism == "IDEAL1Q128buf"): result_file = "result/"+mechanism+"/SQ-result.csv"
@@ -100,8 +103,9 @@ for tp in trafficpatterns:
             #print(load_list)
             #print(p99_list)
 
-        ax[0].plot(load_list, p95, '-' , marker='', label=mechanism)
-        ax[1].plot(load_list, p99,'-' , marker='', label=mechanism)
+        ax[0].plot(load_list, p95, '-' , marker='', label=legend[i])
+        ax[1].plot(load_list, p99,'-' , marker='', label=legend[i])
+        i = i + 1
 
     ax[0].legend()
     ax[1].legend()
@@ -110,15 +114,15 @@ for tp in trafficpatterns:
     ax[1].set_ylabel('p99 latency (us)')#, fontsize=20)
     ax[0].set_xlabel('Load (RPS)') 
     ax[1].set_xlabel('Load (RPS)') 
-    ax[0].set_ylim([0, 1e2])
-    ax[1].set_ylim([0, 1e2])
+    ax[0].set_ylim([0, 1e3])
+    ax[1].set_ylim([0, 1e3])
     ax[0].set_title(tp)
-    ax[0].axhline(10, color='k',linestyle='-.')
-    ax[0].axhline(20, color='k',linestyle='-.')
-    ax[1].axhline(10, color='k',linestyle='-.')
-    ax[1].axhline(20, color='k',linestyle='-.')
+    #ax[0].axhline(10, color='k',linestyle='-.')
+    #ax[0].axhline(20, color='k',linestyle='-.')
+    #ax[1].axhline(10, color='k',linestyle='-.')
+    #ax[1].axhline(20, color='k',linestyle='-.')
 
 
     figure.set_size_inches(8, 8)
     #plt.show()
-    plt.savefig("result/"+tp+"_plot_64q_traf_2_8Q_95_99.pdf")#,bbox_inches='tight')
+    plt.savefig("result/"+tp+"_plot_64Q16T_95_99.pdf")#,bbox_inches='tight')

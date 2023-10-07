@@ -19,15 +19,23 @@
 #include <iostream>
 #include <array>
 #include <algorithm>
-
 #include <infiniband/verbs.h>
+
+
+#define DO_UC 1
+
+#if DO_UC
+	#include "rdma_uc.cc"
+#else 
+	#include "rdma_rc.c"
+#endif
+
 #include <linux/types.h>  //for __be32 type
 #include "ClientRDMAConnection.cc"
 #include <vector>
 #include <list>
 #include <sys/mman.h>
 #include <pthread.h> 
-#include "rdma_uc.cc"
 
 //#define active_thread_num 12+1  		//n loading threads,1 meas. thread 
 #define debug 0
@@ -708,7 +716,7 @@ void* client_send(void* x) {
 			conn->buf_send[i][0] = 0;
 			conn->buf_send[i][2] = 0;
 			conn->buf_send[i][3] = 0;
-			conn->buf_send[i][10] = priority;
+			conn->buf_send[i][12] = priority;
 		//}
 		/*
 		else {
@@ -849,7 +857,7 @@ void* client_send(void* x) {
 				conn->buf_send[i][0] = lat_upper;
 				conn->buf_send[i][2] = 0;
 				conn->buf_send[i][3] = 255;
-				conn->buf_send[i][10] = priority;
+				conn->buf_send[i][12] = priority;
 				//if(sequence_number == 255) sequence_number = 0;
 				//else sequence_number++;
 			//}
@@ -1119,19 +1127,19 @@ void* client_threadfunc(void* x) {
 
 						//if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
 						bufID = a-num_bufs;
-						priorityID = (uint8_t)conn->buf_recv[bufID][50];
+						priorityID = (uint8_t)conn->buf_recv[bufID][52];
 						
 						//printf("priority received = %llu \n", priorityID);
 						//for(z = 42; z <= 49; z++) printf("%x ",(uint8_t)conn->buf_recv[bufID][z]);
 						//printf("\n");
 
-						egressTS = ((uint8_t)conn->buf_recv[bufID][42] << 24) + ((uint8_t)conn->buf_recv[bufID][43] << 16) + ((uint8_t)conn->buf_recv[bufID][44] << 8) + ((uint8_t)conn->buf_recv[bufID][45]);
-						ingressTS = ((uint8_t)conn->buf_recv[bufID][46] << 24) + ((uint8_t)conn->buf_recv[bufID][47] << 16) + ((uint8_t)conn->buf_recv[bufID][48] << 8) + ((uint8_t)conn->buf_recv[bufID][49]);
+						egressTS = ((uint8_t)conn->buf_recv[bufID][42] << 32) + ((uint8_t)conn->buf_recv[bufID][43] << 24) + ((uint8_t)conn->buf_recv[bufID][44] << 16) + ((uint8_t)conn->buf_recv[bufID][45] << 8) + ((uint8_t)conn->buf_recv[bufID][46]);
+						ingressTS = ((uint8_t)conn->buf_recv[bufID][47] << 32) + ((uint8_t)conn->buf_recv[bufID][48] << 24) + ((uint8_t)conn->buf_recv[bufID][49] << 16) + ((uint8_t)conn->buf_recv[bufID][50] << 8) + ((uint8_t)conn->buf_recv[bufID][51]);
 
 						//egressTS = (unsigned long *)strtoul(conn->buf_recv[bufID] + 46, NULL, 0);
 						
 						if(egressTS > ingressTS) latency = egressTS - ingressTS;
-						else latency = 4294967295 + (egressTS - ingressTS);
+						else latency = /*4294967295*/ uint64_t(1099511627775) + (egressTS - ingressTS);
 
 						//printf("ingressTS = %llu, egressTS = %llu, latency = %llu \n", ingressTS, egressTS, latency);
 
@@ -1215,18 +1223,18 @@ void* client_threadfunc(void* x) {
 					    --conn->routs;
 
 						bufID = a-num_bufs;
-						priorityID = (uint8_t)conn->buf_recv[bufID][50];
+						priorityID = (uint8_t)conn->buf_recv[bufID][52];
 						
 						//for(z = 42; z <= 49; z++) printf("%x ",(uint8_t)conn->buf_recv[bufID][z]);
 						//printf("\n");
 
-						egressTS = ((uint8_t)conn->buf_recv[bufID][42] << 24) + ((uint8_t)conn->buf_recv[bufID][43] << 16) + ((uint8_t)conn->buf_recv[bufID][44] << 8) + ((uint8_t)conn->buf_recv[bufID][45]);
-						ingressTS = ((uint8_t)conn->buf_recv[bufID][46] << 24) + ((uint8_t)conn->buf_recv[bufID][47] << 16) + ((uint8_t)conn->buf_recv[bufID][48] << 8) + ((uint8_t)conn->buf_recv[bufID][49]);
+						egressTS = ((uint8_t)conn->buf_recv[bufID][42] << 32) + ((uint8_t)conn->buf_recv[bufID][43] << 24) + ((uint8_t)conn->buf_recv[bufID][44] << 16) + ((uint8_t)conn->buf_recv[bufID][45] << 8) + ((uint8_t)conn->buf_recv[bufID][46]);
+						ingressTS = ((uint8_t)conn->buf_recv[bufID][47] << 32) + ((uint8_t)conn->buf_recv[bufID][48] << 24) + ((uint8_t)conn->buf_recv[bufID][49] << 16) + ((uint8_t)conn->buf_recv[bufID][50] << 8) + ((uint8_t)conn->buf_recv[bufID][51]);
 
 						//egressTS = (unsigned long *)strtoul(conn->buf_recv[bufID] + 46, NULL, 0);
 						
 						if(egressTS > ingressTS) latency = egressTS - ingressTS;
-						else latency = uint32_t(0xFFFFFFFF) + egressTS - ingressTS;
+						else latency = /*uint32_t(0xFFFFFFFF)*/ uint64_t(1099511627775) + egressTS - ingressTS;
 
 						//printf("ingressTS = %llu, egressTS = %llu, latency = %llu \n", ingressTS, egressTS, latency);
 
@@ -1618,7 +1626,12 @@ int main(int argc, char *argv[])
 	assert(warmUpBarrierRet == 0);
 
 	uint8_t ib_port = 1;
-	do_uc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1);
+	
+	#if DO_UC 
+		do_uc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1);
+	#else
+		do_rc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1);
+	#endif
 	sleep(3);
 
   	struct thread_data tdata [connections.size()];

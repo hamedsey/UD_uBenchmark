@@ -21,26 +21,33 @@ index = int(args.index)
 id = int(args.trafficPattern)
 #queues = int(args.queues)
 
-queuesList = [8,16,32,64,128,256]
+queuesList = [48] #[8,16,32,64,128,256]
 
 #mechanisms = ["IDEAL128", "SW128", "INORDER128", "LZCNT128", "AVX", "BLINDPOLL","IDEALmany","IDEAL64Q2buf","IDEAL1Q128buf","LZCNT64Q2buf","SW64Q2buf","IDEAL8Q2B","LZCNT8Q2B", "LZCNT8Q100B", "IDEAL8Q100B","SW8Q100B"]
-mechanisms = ["LZCNT8Q8X","LZCNT8Q8F","SW8Q8X","SW8Q8X2","SW8Q8F2","SW8Q8F","JLQ16SW64","16Q64P","16Q64P30","dFCFS", "dFCFS++", "SUPP","SUPP-Qsweep"]
-
+#mechanisms = ["LZCNT8Q8X","LZCNT8Q8F","SW8Q8X","SW8Q8X2","SW8Q8F2","SW8Q8F","JLQ16SW64","16Q64P","16Q64P30","dFCFS", "dFCFS++", "SUPP","SUPP-Qsweep","64QP16CQ16T","64QP16CQ16Tlocalprio","64QP16CQ16Tglobalprio","64QP64CQ16TSUPP","64QP64CQ16TRRCAP", "64SW"]
+mechanisms = ["48QP12CQ12Tlocalprio","48QP48CQ12TlocalRRprio","48QP48CQ12TSUPP","48QP12CQ12Tglobalprio","48QP1CQ12Tglobalprio"]
+#last_index = 18
+#20M, 20M, 1M, 500k, 500k
 
 #Create results and graphs folders
 if not os.path.exists('result'):
-	os.makedirs('result')
-	for mechanism in mechanisms:
-		os.makedirs('result/'+mechanism)
+    os.makedirs('result')
+	#for mechanism in mechanisms:
+    os.makedirs('result/'+mechanisms[index])
+          
+if not os.path.exists('result/'+mechanisms[index]):
+    os.makedirs('result/'+mechanisms[index])
 
 clk_period = 4.6
 
 #trafficPatternID = [6,7,8,9]
 trafficpatterns = ["NULL", "NULL", "NULL", "NULL", "NULL", "FB", "PC", "SQ", "NC", "EXP"]
-#generatedLoad = ["50000","100000","200000","300000","400000","425000", "450000", "475000", "500000", "525000", "550000", "575000", "600000", "625000", "650000", "675000", "700000", "725000", "750000", "775000", "800000"]
+#generatedLoad = ["50000","100000","200000","300000","400000","425000", "450000", "475000", "500000", "525000", "550000", "575000", "600000", "625000", "650000", "675000", "700000", "725000", "750000", "800000"]
 #generatedLoad = ["1000000","2000000","4000000","8000000","12000000","16000000", "18000000", "20000000", "22000000", "24000000", "26000000", "28000000"]
-generatedLoad = ["28000000"]
+#generatedLoad =  ["1000000","2000000","3000000","4000000","6000000","8000000","10000000","12000000","14000000","16000000","18000000","20000000","22000000","24000000","26000000","28000000"]
 
+#generatedLoad = ["1000000","2000000","3000000","4000000","6000000","8000000","9000000","10000000","11000000","12000000","13000000","14000000","15000000","16000000","17000000","18000000","19000000","20000000"]
+generatedLoad = ["50000", "100000", "150000", "200000", "250000", "300000", "350000" ,"400000" ,"450000" ,"500000"]
 #generatedLoad = ["100000", "200000", "300000", "400000", "500000", "600000", "700000", "800000", "900000", "1000000"]
 
 
@@ -62,7 +69,9 @@ p999_list = []
 
 for queues in queuesList:
     print(queues)
-    with open('result/'+mechanism+'/'+trafficpatterns[id]+'-'+mechanism+'-'+str(queues)+'-result.csv', 'w') as f:
+    #with open('result/'+mechanism+'/'+trafficpatterns[id]+'-'+mechanism+'-'+str(queues)+'-result.csv', 'w') as f:
+    with open('result/'+mechanism+'/'+trafficpatterns[id]+'-result.csv', 'w') as f:
+
         # create the csv writer
         writer = csv.writer(f)
 
@@ -87,15 +96,15 @@ for queues in queuesList:
                     #load_list.append(int(measuredLoad))
                     count = count + 1
 
-                print(filename)
+                #print(filename)
                 data = np.loadtxt(filename)
                 allData = np.append(allData, data)
 
-
-            results.append((16*clk_period/1000)*np.percentile(allData, 50))
-            results.append((16*clk_period/1000)*np.percentile(allData, 95))
-            results.append((16*clk_period/1000)*np.percentile(allData, 99))
-            results.append((16*clk_period/1000)*np.percentile(allData, 99.9))
+            #print(len(allData))
+            results.append((clk_period/1000)*np.percentile(allData, 50))
+            results.append((clk_period/1000)*np.percentile(allData, 95))
+            results.append((clk_period/1000)*np.percentile(allData, 99))
+            results.append((clk_period/1000)*np.percentile(allData, 99.9))
 
             if(id != 7):
                 #now parsing other priorities
@@ -114,17 +123,17 @@ for queues in queuesList:
                         data = np.loadtxt(filename)
                         allData = np.append(allData, data)
 
-                    if data.size == 0: 
+                    if data.size == 0 or data.size < 4: 
                         print("data empty")
                         results.append(0)
                         results.append(0)
                         results.append(0)
                         results.append(0)
                     else:
-                        results.append((16*clk_period/1000)*np.percentile(allData, 50))
-                        results.append((16*clk_period/1000)*np.percentile(allData, 95))
-                        results.append((16*clk_period/1000)*np.percentile(allData, 99))
-                        results.append((16*clk_period/1000)*np.percentile(allData, 99.9))
+                        results.append((clk_period/1000)*np.percentile(allData, 50))
+                        results.append((clk_period/1000)*np.percentile(allData, 95))
+                        results.append((clk_period/1000)*np.percentile(allData, 99))
+                        results.append((clk_period/1000)*np.percentile(allData, 99.9))
 
             writer.writerow(results)
 

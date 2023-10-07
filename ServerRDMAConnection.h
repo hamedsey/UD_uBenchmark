@@ -19,7 +19,8 @@
 #include <unistd.h>
 #include <malloc.h>
 
-#define SHARED_CQ 0
+#define SHARED_CQ 1
+#define SINGLE_CENTRAL_CQ 0
 //if FPGA_NOTIFICATION is 1, this should be zero
 
 #define USE_SRQ 0

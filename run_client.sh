@@ -146,21 +146,23 @@ done
 '
 
 #multi core
-for queues in 16;do #8 16 32 64 128 256;do
+for queues in 48;do #8 16 32 64 128 256;do
     mkdir $dirName"/"$queues
-    for dist in 5 6 9;do
-        echo $dist
+    for dist in 5 6 9;do        echo $dist
         mkdir $dirName"/"$queues"/"$dist
-        for load in 1000000 2000000 4000000 8000000 12000000 16000000 18000000 20000000 22000000 24000000 26000000 28000000;do
+        #for load in 50000 100000 200000 300000 400000 425000 450000 475000 500000 525000 550000 575000 600000 625000 650000 675000 700000 725000 750000 800000;do
+        #for load in 1000000 2000000 3000000 4000000 6000000 8000000 9000000 10000000 11000000 12000000 13000000 14000000 15000000 16000000 17000000 18000000 19000000 20000000;do #22000000 24000000 26000000 28000000;do #scaleout
         #for load in 28000000;do
-        #for load in 100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000;do
+        #for load in 100000 200000 300000 400000 500000 600000 700000 800000 900000 1000000;do #scale up SUPP
+        for load in 50000 100000 150000 200000 250000 300000 350000 400000 450000 500000;do  #for global prio & SQ
             echo $load
             mkdir $dirName"/"$queues"/"$dist"/"$load
             #sudo tcpdump -i enp24s0 -s 100 src 192.168.1.5 and dst port 4791 -w $dirName"/"$queues"/"$dist"/"$load"/"$load.pcap &
             #if doing sq/one priority change n to one otherwise $queues 
 
             ./UD_Client -w 16384 -t 12 -d $dirName"/"$queues"/"$dist"/"$load -v mlx5_0 -g 3 -m $dist -s 192.168.1.5 -l $load -q $serverQpn -n $queues >> $dirName"/"$queues"/"$dist"/"$load"/log.txt"
-            
+            #./UD_Client -w 1 -t 1 -d $dirName"/"$queues"/"$dist"/"$load -v mlx5_0 -g 3 -m $dist -s 192.168.1.5 -l $load -q $serverQpn -n $queues >> $dirName"/"$queues"/"$dist"/"$load"/log.txt"
+
             drop=$(tail -n 1 $dirName"/"$queues"/"$dist"/"$load"/log.txt")
             echo $drop
             if [[ drop == 1 ]];then

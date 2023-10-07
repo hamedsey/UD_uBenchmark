@@ -15,8 +15,16 @@
 #include <arpa/inet.h>
 #include <time.h>
 #include  <signal.h>
-
 #include <infiniband/verbs.h>
+
+#define DO_UC 1
+
+#if DO_UC
+	#include "rdma_uc.cc"
+#else 
+	#include "rdma_rc.c"
+#endif
+
 #include <linux/types.h>  //for __be32 type
 #include "ServerRDMAConnection.cc"
 #include <vector>
@@ -27,13 +35,14 @@
 
 #include <set>
 #include <list>
-#include "rdma_uc.cc"
+
 #include <immintrin.h>
 #include <x86intrin.h>
 #include <cstdlib>
 //#include <intrin.h>
 
 #include <iostream>
+#include <mutex>
 //using namespace std;
 
 #define debug 0
@@ -58,7 +67,7 @@
 //if SHARED_CQ is 1, this should be zero (for strict policy)
 
 #define PROCESS_IN_ORDER 0
-#define STRICT_PRIORITY 0
+#define STRICT_PRIORITY 1
 #define ROUND_ROBIN 0
 #define WEIGHTED_ROUND_ROBIN 0
 #define ASSERT 0  //should be same as REORDER pragma in client //disable if using SRQ (shared receive queue)
@@ -67,6 +76,8 @@
 #define IDEAL 0 //enable shared CQ with this
 
 #define SCALEOUT 0
+
+#define GLOBAL_STRICT_PRIORITY 0
 
 
 			//1000
@@ -128,6 +139,16 @@ uint64_t countOther = 0;
 //uint64_t idlePolls = 0;
 
 uint64_t **countPriority;
+
+#if GLOBAL_STRICT_PRIORITY
+	vector<list<recvReq> > metaCQ;
+	set<uint16_t> skipList;
+	set<uint16_t>::iterator skipListIter;
+	set<uint16_t>::iterator tempskipListIter;
+	set<uint16_t>::iterator skipListIterPrev;
+	mutex skipListMutex;
+	//mutex metaCQMutex;
+#endif
 
 void     INThandler(int);
 
@@ -247,12 +268,17 @@ void* server_threadfunc(void* x) {
         if(thread_num < 8) CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
 	    else CPU_SET(24+(thread_num%8), &cpuset);
     #else
-        CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
+        if(thread_num < 12) CPU_SET(thread_num, &cpuset);  //set CPU 2 on cpuset
+		else CPU_SET(thread_num + 12, &cpuset);
     #endif
 
 	printf("T%d - qp = 0x%06x , %d, offset = %d \n",thread_num,conn->my_dest.qpn,conn->my_dest.qpn, offset);
 
-	if(thread_num == 0) do_uc(ib_devname_in, server_name, tcp_port, conn->ib_port, gidx_in, NUM_QUEUES);
+	#if DO_UC 
+		if(thread_num == 0) do_uc(ib_devname_in, server_name, tcp_port, conn->ib_port, gidx_in, NUM_QUEUES);
+	#else
+		if(thread_num == 0) do_rc(ib_devname_in, server_name, tcp_port, conn->ib_port, gidx_in, NUM_QUEUES);
+	#endif
 
 	sched_setaffinity(0, sizeof(cpuset), &cpuset);
 
@@ -307,6 +333,7 @@ void* server_threadfunc(void* x) {
 		//for(int z = 0; z < numberOfPriorities; z++) printf("%llu \n",queueWeights[z]);
 	#endif
 
+	#if !GLOBAL_STRICT_PRIORITY
 	vector<list<recvReq> > metaCQ; //(numberOfPriorities , list<uint16_t>(0,0));
 	metaCQ.resize(numberOfPriorities , list<recvReq>(0,{0,0}));
 
@@ -314,6 +341,12 @@ void* server_threadfunc(void* x) {
 	set<uint16_t>::iterator skipListIter = skipList.begin();
 	set<uint16_t>::iterator tempskipListIter = skipList.begin();
 	set<uint16_t>::iterator skipListIterPrev = skipList.begin();
+	#else
+
+	skipListIter = skipList.begin();
+	tempskipListIter = skipList.begin();
+	skipListIterPrev = skipList.begin();
+	#endif
 	//int16_t skipListPrioPrev = -1;
 
 	uint16_t qpID = 0;
@@ -368,8 +401,12 @@ void* server_threadfunc(void* x) {
 			conn = connections[offset];
 			//printf("offset = %d \n",offset);
 			//offset = ((NUM_QUEUES-1) & (offset+1));	
-			if(offset == NUM_QUEUES-1) offset = 0;
-			else offset++;	
+
+			if(offset > (NUM_THREADS*((NUM_QUEUES/NUM_THREADS)-1))-1) offset = thread_num;
+			else offset += NUM_THREADS;
+
+			//if(offset == NUM_QUEUES-1) offset = 0;
+			//else offset++;	
 		#endif
 		#if STRICT_POLL
 			conn = connections[offset];
@@ -523,7 +560,7 @@ void* server_threadfunc(void* x) {
 
 
 			/////////////////////////////////Multi Queue - lzcnt //////////////////////////////////////////////
-			#if 0
+			#if 1
 			uint32_t byteFlipMask = 0x00000000;
 			for (i = 0; i < NUM_QUEUES; i += 8) {
 
@@ -533,13 +570,15 @@ void* server_threadfunc(void* x) {
 				//leadingZeros = __builtin_clzll(value); 
 				//leadingZeros = _lzcnt_u64(value);
 
-				#if debugFPGA
-				printf("leading count = %llu, value = %llu \n", leadingZeros, value);
-				for(uint64_t y = 0; y < 8 ; y++) {
-					printf("%x  ", (res.buf)[y]);
+				//#if debugFPGA
+				if(leadingZeros < 64) {
+					printf("leading count = %llu, value = %llu \n", leadingZeros, value);
+					for(uint64_t y = 0; y < 8 ; y++) {
+						printf("%x  ", (res.buf)[y]);
+					}
+					printf("\n \n");
 				}
-				printf("\n \n");
-				#endif
+				//#endif
 
 				//printf("leading count = %llu, value = %llu \n", leadingZeros, value);
 				//for(uint64_t y = 0; y < 64 ; y++) {
@@ -672,7 +711,7 @@ void* server_threadfunc(void* x) {
 			//////////////////////////////////////////AVX256////////////////////////////////////////////////
 			//the work item goes to queue n
 			//the notification goes to byte n ^ 7
-			#if 1
+			#if 0
 			#if debugFPGA
 			for (int j = 0; j < 64; ++j) {
 				//array[j] = 0x01;
@@ -991,7 +1030,11 @@ void* server_threadfunc(void* x) {
 					ne = ibv_poll_cq(ctxGlobal->cq[thread_num], 1 , wc);
 					if(ne == 0) continue;
 				#elif SHARED_CQ
+					#if SINGLE_CENTRAL_CQ
+					ne = ibv_poll_cq(ctxGlobal->cq[0], num_bufs*2 , wc);
+					#else
 					ne = ibv_poll_cq(ctxGlobal->cq[thread_num], num_bufs*2 , wc);
+					#endif
 				#else 
 					#if debugFPGA
 					printf("poll (1) \n");
@@ -1163,10 +1206,18 @@ void* server_threadfunc(void* x) {
 				#endif
 
 				#if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY
-					uint8_t priorityID = (uint)buf_recv[a-num_bufs][50];
+					uint8_t priorityID = (uint)buf_recv[a-num_bufs][52];
+					#if GLOBAL_STRICT_PRIORITY
+					skipListMutex.lock();
+					#endif
 					skipList.insert(priorityID);
+					
 					metaCQ[priorityID].emplace_back(x);
-				#endif
+					#if GLOBAL_STRICT_PRIORITY
+					skipListMutex.unlock();
+					#endif
+					
+				#endif`
 
 				#if PROCESS_IN_ORDER
 					//inOrderArrivals.emplace_back(x);
@@ -1209,13 +1260,14 @@ void* server_threadfunc(void* x) {
 				#if SHARED_CQ && IDEAL
 					bufID = a;
 					srcQP = wc[i].src_qp;
+					printf("received, bufID = %llu, srcQP = %llu \n",bufID, srcQP);
 				#endif
                 //break;
             
-		#if !IDEAL
+		//#if !IDEAL
 			}
         }
-		#endif
+		//#endif
 	#if FPGA_NOTIFICATION
 	}
 	#endif
@@ -1225,9 +1277,12 @@ void* server_threadfunc(void* x) {
 	//#else
 
 process:
-//printf("at process \n");
 #if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY
+	#if GLOBAL_STRICT_PRIORITY
+	skipListMutex.lock();
+	#endif
 	if(!skipList.empty() && skipList.size() != 0) {
+
 #elif PROCESS_IN_ORDER
 	if(size > 0) { //inOrderArrivals.size() > 0) {
 #elif !SHARED_CQ 
@@ -1237,15 +1292,22 @@ process:
 
 		#if STRICT_PRIORITY && !PROCESS_IN_ORDER
             set<uint16_t>::iterator iter = skipList.begin();
-			priority = *iter;
 
+			priority = *iter;
 			assert(metaCQ[priority].size() > 0);
 			recvReq tmp = metaCQ[priority].front();
+
 			bufID = tmp.bufID;
 			srcQP = tmp.srcQP;
 			metaCQ[priority].pop_front();
+
 			if(metaCQ[priority].size() == 0) skipList.erase(iter); //skipList.erase(priority);
-			//assert(priority == (uint)buf_recv[bufID-num_bufs][50]);
+
+			#if GLOBAL_STRICT_PRIORITY
+			skipListMutex.unlock();
+			#endif
+
+			//assert(priority == (uint)buf_recv[bufID-num_bufs][52]);
 		#endif
 
 		#if ROUND_ROBIN && !PROCESS_IN_ORDER
@@ -1285,7 +1347,7 @@ process:
 
 
 			
-			//assert(priority == (uint)conn->buf_recv[bufID-num_bufs][50]);
+			//assert(priority == (uint)conn->buf_recv[bufID-num_bufs][52]);
     
 		#endif
 		#if WEIGHTED_ROUND_ROBIN && !PROCESS_IN_ORDER
@@ -1421,7 +1483,7 @@ process:
 			srcQP = temp.srcQP;
 			metaCQ[priority].pop_front();
 			if(metaCQ[priority].size() == 0) skipList.erase(iter); //skipList.erase(priority);
-			//assert(priority == (uint)conn->buf_recv[bufID-num_bufs][50]);
+			//assert(priority == (uint)conn->buf_recv[bufID-num_bufs][52]);
 
 			if(head == tail && size == 0) continue;
 			else if(tail == recv_bufs_num-1) tail = 0;
@@ -1447,32 +1509,32 @@ process:
 				printf("inOrderArrivals \n");
 				for(uint16_t u = 0; u < inOrderArrivals.size(); u++)
 				{
-					printf(" %d (%d) ",inOrderArrivals[u]-num_bufs, (uint)buf_recv[inOrderArrivals[u]-num_bufs][50]);
-					//printf(" %d, ",(uint)buf_recv[inOrderArrivals[u]-num_bufs][50]);
+					printf(" %d (%d) ",inOrderArrivals[u]-num_bufs, (uint)buf_recv[inOrderArrivals[u]-num_bufs][52]);
+					//printf(" %d, ",(uint)buf_recv[inOrderArrivals[u]-num_bufs][52]);
 				}
 				printf("\n");
 			#endif
 					
-			//printf("priority is %d, and buf prio is %d \n",priority,(uint)conn->buf_recv[bufID-num_bufs][50]);
+			//printf("priority is %d, and buf prio is %d \n",priority,(uint)conn->buf_recv[bufID-num_bufs][52]);
 		#endif
 
 			//assert makes sure QPs using correct QP
 			#if ASSERT
 				/*
-				if(((bufID-num_bufs)/bufsPerQP) != ((uint8_t)buf_recv[bufID-num_bufs][50])) {
-					printf("calculated prio = %d, buffer prio = %d \n",((bufID-num_bufs)/bufsPerQP),((uint)buf_recv[bufID-num_bufs][50]));
+				if(((bufID-num_bufs)/bufsPerQP) != ((uint8_t)buf_recv[bufID-num_bufs][52])) {
+					printf("calculated prio = %d, buffer prio = %d \n",((bufID-num_bufs)/bufsPerQP),((uint)buf_recv[bufID-num_bufs][52]));
 					printf("inOrderArrivals \n");
 					for(uint16_t u = 0; u < inOrderArrivals.size(); u++)
 					{
-						printf(" %llu (%llu) ",inOrderArrivals[u]-num_bufs, (uint8_t)buf_recv[inOrderArrivals[u]-num_bufs][50]);
-						//printf(" %d, ",(uint)buf_recv[inOrderArrivals[u]-num_bufs][50]);
+						printf(" %llu (%llu) ",inOrderArrivals[u]-num_bufs, (uint8_t)buf_recv[inOrderArrivals[u]-num_bufs][52]);
+						//printf(" %d, ",(uint)buf_recv[inOrderArrivals[u]-num_bufs][52]);
 					}
 					printf("\n");
 				}
 				*/
 				//printf("bufID = %llu \n", bufID);
-				//printf("calculated prio = %llu, buffer prio = %llu \n",((bufID-num_bufs)/bufsPerQP),((uint)buf_recv[bufID-num_bufs][50]));
-				assert(((uint8_t)((bufID-num_bufs)/bufsPerQP)) == ((uint8_t)buf_recv[bufID-num_bufs][50]));
+				//printf("calculated prio = %llu, buffer prio = %llu \n",((bufID-num_bufs)/bufsPerQP),((uint)buf_recv[bufID-num_bufs][52]));
+				assert(((uint8_t)((bufID-num_bufs)/bufsPerQP)) == ((uint8_t)buf_recv[bufID-num_bufs][52]));
 			#endif
 
 			#if SHARED_CQ
@@ -1499,7 +1561,7 @@ process:
 				//printf("packet sequence number = %lu , sequence number in BV = %lu \n", sequence_number, sequenceNumberInBV);
 			#endif
 
-			countPriority[thread_num][(uint8_t)buf_recv[bufID-num_bufs][50]]++;
+			countPriority[thread_num][(uint8_t)buf_recv[bufID-num_bufs][52]]++;
             uint8_t sleep_int_lower = (uint)buf_recv[bufID-num_bufs][41];
             uint8_t sleep_int_upper = (uint)buf_recv[bufID-num_bufs][40];	
 
@@ -1560,9 +1622,9 @@ process:
 				
 				//counting number of notifications from the FPGA
 				//if((uint)buf_recv[bufID-num_bufs][53] == 153) notifCount++;
-                //if((uint)buf_recv[bufID-num_bufs][50] == 1) printf(" %x ", (uint)buf_recv[bufID-num_bufs][50]);
+                //if((uint)buf_recv[bufID-num_bufs][52] == 1) printf(" %x ", (uint)buf_recv[bufID-num_bufs][52]);
 
-				memcpy(buf_send[bufID-num_bufs],buf_recv[bufID-num_bufs]+40,18);
+				memcpy(buf_send[bufID-num_bufs],buf_recv[bufID-num_bufs]+40,20);
 				//for(int q = 0; q <= 18; q++) {
 					//printf(" %x ", (uint)conn->buf_recv[bufID-num_bufs][q+40]);
 				//	buf_send[bufID-num_bufs][q] = (uint)buf_recv[bufID-num_bufs][q+40];
@@ -1572,7 +1634,7 @@ process:
             #endif
 
 
-
+			//printf("posting receive and send, qpID = %llu, bufID = %llu, srcQP = %llu \n",qpID, bufID, srcQP);
             conn->routs += !(conn->pp_post_recv(conn->ctx, bufID));
             //if (conn->routs != num_bufs) fprintf(stderr,"Couldn't post receive (%d)\n",conn->routs);
 
@@ -1607,115 +1669,128 @@ process:
 			#if MEAS_TIME_BETWEEN_PROCESSING_TWO_REQ
 				start_cycle = readTSC(); 
 			#endif
+		
+		#if !SHARED_CQ 
         }
-		#if IDEAL
+		#endif
+
+		#if PROCESS_IN_ORDER
+		//#if IDEAL
 		}
-		}
 		#endif
-		//printf("before round robin \n");
-		#if ROUND_ROBIN
-			//priority++;
-			//if(priority == numberOfPriorities) priority = 0;
+	#if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY
+	}
+	else {
+		#if GLOBAL_STRICT_PRIORITY
+		skipListMutex.unlock();
 		#endif
+	}
+	#endif	
 
-		#if WEIGHTED_ROUND_ROBIN
-			//checkCnt++;
-			//if(checkCnt == queueWeights[priority]) {
-			//	checkCnt = 0;
-			//	priority++;
-			//	if(priority == numberOfPriorities) priority = 0;
-			//}
+	//printf("before round robin \n");
+	#if ROUND_ROBIN
+		//priority++;
+		//if(priority == numberOfPriorities) priority = 0;
+	#endif
+
+	#if WEIGHTED_ROUND_ROBIN
+		//checkCnt++;
+		//if(checkCnt == queueWeights[priority]) {
+		//	checkCnt = 0;
+		//	priority++;
+		//	if(priority == numberOfPriorities) priority = 0;
+		//}
+	#endif
+
+	#if FPGA_NOTIFICATION
+		#if debugFPGA
+		printf("poll (2) \n");
 		#endif
+		bool foundRecv = false;
+		for(int iter = 0; iter < 2; iter++) {
+			if(foundRecv == true) break;
+			ne = ibv_poll_cq(conn->ctx->cq, 1 , wc);
 
-		#if FPGA_NOTIFICATION
-			#if debugFPGA
-			printf("poll (2) \n");
-			#endif
-			bool foundRecv = false;
-			for(int iter = 0; iter < 2; iter++) {
-				if(foundRecv == true) break;
-				ne = ibv_poll_cq(conn->ctx->cq, 1 , wc);
-
-				if (ne < 0) {
-					fprintf(stderr, "poll CQ failed %d\n", ne);
-				}
-
-				if (ne > 0) {
-					#if debugFPGA
-					printf("found work item in poll (2) , setting vector to 0xFF \n");
-					#endif
-					//isZero = true;
-					//continue;
-
-					//for (i = 0; i < ne; ++i) {
-						i = 0;
-						if (wc[i].status != IBV_WC_SUCCESS) {
-							fprintf(stderr, "1 Failed status %s (%d) for wr_id %d\n",
-								ibv_wc_status_str(wc[i].status),
-								wc[i].status, (int) wc[i].wr_id);
-						}
-					
-						a = (int) wc[i].wr_id;
-
-						//switch (a) {
-						//case 0 ... num_bufs-1:
-						if(a >= 0 && a < num_bufs) {
-
-							qpID = a/bufsPerQP;
-							conn = connections[qpID];
-
-							conn->scnt++;
-							++scnt;
-							--conn->souts;
-
-							#if debugFPGA
-							printf("found send completion in completion queue \n");
-							#endif
-
-							#if debug
-								printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
-							#endif
-
-							//break;
-						}
-						else {
-						//case num_bufs ... (2*num_bufs)-1:
-							#if MEAS_TIME_ON_SERVER
-								clock_gettime(CLOCK_MONOTONIC, &requestStart);
-							#endif
-
-							#if !SHARED_CQ
-								#if debugFPGA
-								printf("b4 setting work item metadata for next iter \n");
-								#endif
-
-								//printf("setting buf sequence number to 255 \n");
-
-								(res.buf)[connIndex^byteFlipMask] = 0xFF; //htonll(0x0000000000000000);
-
-								(processBufB4Polling[connIndex]) = a;
-								(processBufB4PollingSrcQP[connIndex]) = wc[i].src_qp;
-								#if debugFPGA
-								printf("after setting work item metadata for next iter \n");
-								#endif
-
-								foundRecv = true;
-							#endif
-
-							//break;
-						}
-					//}
-				}
-				else {
-					#if debugFPGA
-					printf("no work item in poll (2) \n");
-					#endif
-					processBufB4Polling[connIndex] = NULL;
-					processBufB4PollingSrcQP[connIndex] = NULL;
-					break;
-				}
+			if (ne < 0) {
+				fprintf(stderr, "poll CQ failed %d\n", ne);
 			}
-		#endif
+
+			if (ne > 0) {
+				#if debugFPGA
+				printf("found work item in poll (2) , setting vector to 0xFF \n");
+				#endif
+				//isZero = true;
+				//continue;
+
+				//for (i = 0; i < ne; ++i) {
+					i = 0;
+					if (wc[i].status != IBV_WC_SUCCESS) {
+						fprintf(stderr, "1 Failed status %s (%d) for wr_id %d\n",
+							ibv_wc_status_str(wc[i].status),
+							wc[i].status, (int) wc[i].wr_id);
+					}
+				
+					a = (int) wc[i].wr_id;
+
+					//switch (a) {
+					//case 0 ... num_bufs-1:
+					if(a >= 0 && a < num_bufs) {
+
+						qpID = a/bufsPerQP;
+						conn = connections[qpID];
+
+						conn->scnt++;
+						++scnt;
+						--conn->souts;
+
+						#if debugFPGA
+						printf("found send completion in completion queue \n");
+						#endif
+
+						#if debug
+							printf("T%d - send complete, a = %d, rcnt = %d, scnt = %d, routs = %d, souts = %d  \n",thread_num,a,rcnt,scnt,conn->routs,conn->souts);
+						#endif
+
+						//break;
+					}
+					else {
+					//case num_bufs ... (2*num_bufs)-1:
+						#if MEAS_TIME_ON_SERVER
+							clock_gettime(CLOCK_MONOTONIC, &requestStart);
+						#endif
+
+						#if !SHARED_CQ
+							#if debugFPGA
+							printf("b4 setting work item metadata for next iter \n");
+							#endif
+
+							//printf("setting buf sequence number to 255 \n");
+
+							(res.buf)[connIndex^byteFlipMask] = 0xFF; //htonll(0x0000000000000000);
+
+							(processBufB4Polling[connIndex]) = a;
+							(processBufB4PollingSrcQP[connIndex]) = wc[i].src_qp;
+							#if debugFPGA
+							printf("after setting work item metadata for next iter \n");
+							#endif
+
+							foundRecv = true;
+						#endif
+
+						//break;
+					}
+				//}
+			}
+			else {
+				#if debugFPGA
+				printf("no work item in poll (2) \n");
+				#endif
+				processBufB4Polling[connIndex] = NULL;
+				processBufB4PollingSrcQP[connIndex] = NULL;
+				break;
+			}
+		}
+	#endif
 
 
 
@@ -1723,9 +1798,9 @@ process:
 
 ///////////////////////////
 		//printf("size of vector indexOfNonZeroPriorities is: %d \n", indexOfNonZeroPriorities.size());
-#if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY || PROCESS_IN_ORDER || !SHARED_CQ
+//#if ROUND_ROBIN || WEIGHTED_ROUND_ROBIN || STRICT_PRIORITY || PROCESS_IN_ORDER || !SHARED_CQ
 	}
-#endif
+//#endif
 //end of while(1) loop
 
 	if (gettimeofday(&conn->end, NULL)) {
@@ -1922,6 +1997,10 @@ int main(int argc, char *argv[])
 		countPriority[t] = (uint64_t *)malloc(numberOfPriorities*sizeof(uint64_t));
 		for(int g = 0; g < numberOfPriorities; g++) countPriority[t][g] = 0;
 	}
+
+	#if GLOBAL_STRICT_PRIORITY
+		metaCQ.resize(numberOfPriorities , list<recvReq>(0,{0,0}));
+	#endif
 
 	#if COUNT_IDLE_POLLS
 		idlePolls = (uint64_t*)calloc(NUM_THREADS,sizeof(uint64_t));
