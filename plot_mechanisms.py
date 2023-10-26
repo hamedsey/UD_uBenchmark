@@ -31,9 +31,9 @@ path = input_dir.split("/")
 #if not os.path.exists('graphs'):
 #    os.makedirs('graphs')
 
-queues = 64
+queues = 48
 #trafficpatterns = ["FB", "PC", "SQ", "EXP"]
-trafficpatterns = ["FB"]#, "PC", "EXP"]
+trafficpatterns = ["FB", "PC", "EXP"]#, "PCR"]
 
 
 #mechanisms = ["IDEAL", "SW", "INORDER", "LZCNT", "AVX","BLINDPOLL"]
@@ -49,8 +49,44 @@ trafficpatterns = ["FB"]#, "PC", "EXP"]
 #mechanisms = ["SW8Q8X2", "LZCNT8Q8X", "SW8Q8X", "SW8Q8F2", "LZCNT8Q8F", "SW8Q8F"]
 #mechanisms = ["SW8Q8X2", "LZCNT8Q8X", "SW8Q8F2", "LZCNT8Q8F"]
 
-mechanisms = ["64QP16CQ16T","64QP16CQ16Tlocalprio","64QP16CQ16Tglobalprio","64QP64CQ16TSUPP","64QP64CQ16TRRCAP"]
-legend = ["no prioritizing (ideal)", "local prioritizing", "global prioritizing","scale-up", "ceiling64"]
+#mechanisms = ["64QP16CQ16T","64QP16CQ16Tlocalprio","64QP16CQ16Tglobalprio","64QP64CQ16TSUPP","64QP64CQ16TRRCAP"]
+#legend = ["no prioritizing (ideal)", "local prioritizing", "global prioritizing","scale-up", "ceiling64"]
+
+###################################
+#fixed service time
+#global prioritizing
+#priomethod = "global"
+#mechanisms = ["1Q12Tglobalprio","48Q12TSUPP","ceiling"]
+#legend = ["1 queue", "48 queues", "ceiling"]
+
+#local prioritizing
+#priomethod = "local"
+#mechanisms = ["12Q12Tlocalprio","48Q12Tlocalprio", "ceiling"]
+#legend = ["12 queues", "48 queues", "ceiling"]
+
+#group prioritizing
+#priomethod = "group"
+#mechanisms = ["6Q12Tgroupprio","3Q12Tgroupprio", "ceiling"]
+#legend = ["6 queues", "3 queues", "ceiling"]
+###################################
+
+#exponential service time
+#global prioritizing
+#priomethod = "global"
+#mechanisms = ["1Q12TglobalprioEXP","48Q12TglobalprioSUPPEXP","ceilingEXP"]
+#legend = ["1 queue", "48 queues", "ceiling"]
+
+#local prioritizing
+#priomethod = "local"
+#mechanisms = ["12Q12TlocalprioEXP","48Q12TlocalprioEXP", "ceilingEXP"]
+#legend = ["12 queues", "48 queues", "ceiling"]
+
+#group prioritizing
+priomethod = "group"
+mechanisms = ["6Q12TgroupprioEXP","3Q12TgroupprioEXP"]#, "ceilingEXP"]
+legend = ["6 queues", "3 queues", "ceiling"]
+###################################
+
 
 #priorities = 50
 # Creates a list containing 50 lists, each of 0 items, all set to 0
@@ -71,7 +107,7 @@ for tp in trafficpatterns:
     i = 0
     for mechanism in mechanisms:
         print(mechanism)
-        if(mechanism == "IDEAL" or mechanism == "IDEAL64" or mechanism == "IDEAL1Q128buf"): result_file = "result/"+mechanism+"/SQ-result.csv"
+        if(mechanism == "ceiling" or mechanism == "ceilingEXP"): result_file = "result/"+mechanism+"/FB-result.csv"
         else: result_file = "result/"+mechanism+"/"+tp+"-result.csv"
 
         #color_index = 0
@@ -114,8 +150,8 @@ for tp in trafficpatterns:
     ax[1].set_ylabel('p99 latency (us)')#, fontsize=20)
     ax[0].set_xlabel('Load (RPS)') 
     ax[1].set_xlabel('Load (RPS)') 
-    ax[0].set_ylim([0, 1e3])
-    ax[1].set_ylim([0, 1e3])
+    ax[0].set_ylim([0, 50])#1e2])
+    ax[1].set_ylim([0, 50])#1e2])
     ax[0].set_title(tp)
     #ax[0].axhline(10, color='k',linestyle='-.')
     #ax[0].axhline(20, color='k',linestyle='-.')
@@ -125,4 +161,4 @@ for tp in trafficpatterns:
 
     figure.set_size_inches(8, 8)
     #plt.show()
-    plt.savefig("result/"+tp+"_plot_64Q16T_95_99.pdf")#,bbox_inches='tight')
+    plt.savefig("result/"+tp+"_"+priomethod+"prio_p95_p99_EXP.pdf")#,bbox_inches='tight')

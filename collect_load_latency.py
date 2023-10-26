@@ -25,9 +25,13 @@ queuesList = [48] #[8,16,32,64,128,256]
 
 #mechanisms = ["IDEAL128", "SW128", "INORDER128", "LZCNT128", "AVX", "BLINDPOLL","IDEALmany","IDEAL64Q2buf","IDEAL1Q128buf","LZCNT64Q2buf","SW64Q2buf","IDEAL8Q2B","LZCNT8Q2B", "LZCNT8Q100B", "IDEAL8Q100B","SW8Q100B"]
 #mechanisms = ["LZCNT8Q8X","LZCNT8Q8F","SW8Q8X","SW8Q8X2","SW8Q8F2","SW8Q8F","JLQ16SW64","16Q64P","16Q64P30","dFCFS", "dFCFS++", "SUPP","SUPP-Qsweep","64QP16CQ16T","64QP16CQ16Tlocalprio","64QP16CQ16Tglobalprio","64QP64CQ16TSUPP","64QP64CQ16TRRCAP", "64SW"]
-mechanisms = ["48QP12CQ12Tlocalprio","48QP48CQ12TlocalRRprio","48QP48CQ12TSUPP","48QP12CQ12Tglobalprio","48QP1CQ12Tglobalprio"]
+#mechanisms = ["48QP12CQ12Tlocalprio","48QP48CQ12TlocalRRprio","48QP48CQ12TSUPP","48QP12CQ12Tglobalprio","48QP1CQ12Tglobalprio","48QP12CQ12Tgroupsof4prio","48QP6CQ12Tgroupsof4prio","48QP3CQ12Tgroupsof4prio","48QP6CQ12Tgroupsof2prio","48QP12CQ12Tglobalprio2"]
 #last_index = 18
 #20M, 20M, 1M, 500k, 500k
+
+
+#mechanisms = ["1Q12Tglobalprio","12Q12Tglobalprio","12Q12Tlocalprio","48Q12TSUPP","48Q12Tlocalprio","6Q12Tgroupprio","3Q12Tgroupprio","ceiling","12Q12Tglobalprio4"]
+mechanisms = ["1Q12TglobalprioEXP","12Q12TlocalprioEXP","48Q12TlocalprioEXP","48Q12TglobalprioSUPPEXP","ceilingEXP","6Q12TgroupprioEXP","3Q12TgroupprioEXP"]
 
 #Create results and graphs folders
 if not os.path.exists('result'):
@@ -41,14 +45,23 @@ if not os.path.exists('result/'+mechanisms[index]):
 clk_period = 4.6
 
 #trafficPatternID = [6,7,8,9]
-trafficpatterns = ["NULL", "NULL", "NULL", "NULL", "NULL", "FB", "PC", "SQ", "NC", "EXP"]
+trafficpatterns = ["NULL", "NULL", "NULL", "NULL", "NULL", "FB", "PC", "SQ", "NC", "EXP", "PCR"]
 #generatedLoad = ["50000","100000","200000","300000","400000","425000", "450000", "475000", "500000", "525000", "550000", "575000", "600000", "625000", "650000", "675000", "700000", "725000", "750000", "800000"]
 #generatedLoad = ["1000000","2000000","4000000","8000000","12000000","16000000", "18000000", "20000000", "22000000", "24000000", "26000000", "28000000"]
 #generatedLoad =  ["1000000","2000000","3000000","4000000","6000000","8000000","10000000","12000000","14000000","16000000","18000000","20000000","22000000","24000000","26000000","28000000"]
 
+##Local 12Q, 48Q, ceiling
 #generatedLoad = ["1000000","2000000","3000000","4000000","6000000","8000000","9000000","10000000","11000000","12000000","13000000","14000000","15000000","16000000","17000000","18000000","19000000","20000000"]
-generatedLoad = ["50000", "100000", "150000", "200000", "250000", "300000", "350000" ,"400000" ,"450000" ,"500000"]
-#generatedLoad = ["100000", "200000", "300000", "400000", "500000", "600000", "700000", "800000", "900000", "1000000"]
+
+#Global SQ
+#generatedLoad = ["50000", "100000", "150000", "200000", "250000", "300000", "350000" ,"400000" ,"450000" ,"500000", "550000" ,"600000" ,"650000" ,"700000"]
+
+#Global 48
+#generatedLoad = ["100000", "200000", "300000", "400000", "500000", "600000", "700000", "800000", "900000", "1000000", "1100000", "1200000","1300000"]
+
+generatedLoad = ["200000", "400000", "600000", "800000", "1000000", "1100000", "1200000", "1300000", "1400000", "1500000"] #for 12 queues, groups of 4
+#generatedLoad = ["300000", "600000", "900000", "1200000", "1500000", "1800000", "1900000", "2000000", "2100000", "2200000", "2300000", "2400000", "2500000"] #for 12 queues, groups of 2
+      
 
 
 #for load in 50000 100000 200000 300000 400000 425000 450000 475000 500000 525000 550000 575000 600000 625000 650000 675000 700000 725000 750000 775000 800000;do
@@ -66,6 +79,7 @@ p95_list  = []
 p99_list  = []
 p999_list = []
 
+first_row = ["client load","measured load","median","95%", "99%", "99.9%"]
 
 for queues in queuesList:
     print(queues)
@@ -76,7 +90,13 @@ for queues in queuesList:
         writer = csv.writer(f)
 
         # write a row to the csv file
-        writer.writerow(["client load","measured load","median","95%", "99%", "99.9%", "lost too much"])
+        for i in range(queues):
+            first_row.append("median")
+            first_row.append("95%")
+            first_row.append("99%")
+            first_row.append("99.9%")
+
+        writer.writerow(first_row)
         for clientLoad in generatedLoad:
         #trafficpatterns[id]
             results = []

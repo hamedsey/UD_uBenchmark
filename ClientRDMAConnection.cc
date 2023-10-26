@@ -152,7 +152,7 @@ struct pingpong_context* RDMAConnection::pp_init_ctx(struct ibv_device *ib_dev, 
 					fprintf(stderr, "Couldn't create QP\n");
 					goto clean_cq;
 				}
-				if(ctx->qp->qp_num %(16*12) == 0) break;
+				if(ctx->qp->qp_num %(1024) == 0) break;
 				else ibv_destroy_qp(ctx->qp);
 			}
 		}

@@ -42,14 +42,14 @@
 #define INTERVAL 10000000 		//RPS MEAS INTERVAL
 #define SYNC_INTERVAL 1000000 	//RPS MEAS INTERVAL
 
-#define RR 0			//enables round robin request distribution per thread
+#define RR 0		//enables round robin request distribution per thread
 #define RANDQP 0				//enables random request distribution per thread
 #define MEAS_RAND_NUM_GEN_LAT 0	//enables measuring latency of random number generator 
 #define MEAS_GEN_LAT 0	//enables measuring latency of random number generator 
 #define ENABLE_SERV_TIME 0
 #define SERVICE_TIME_SIZE 0x8000
 #define SEND_SERVICE_TIME 0
-#define REORDER 1 //set to zero if you want all traffic to go to a single server core (AND turnoff assert on server)
+#define REORDER 0 //set to zero if you want all traffic to go to a single server core (AND turnoff assert on server)
 #define SEND2ONEQ 0
 
 #define RDMA_WRITE_TO_BUF_WITH_EVERY_SEND 0
@@ -61,6 +61,9 @@ enum {
 	UNIFORM = 2,
 	EXPONENTIAL = 3,
     BIMODAL = 4,
+};
+
+enum {
 	FB =  5,
 	PC = 6,
 	SQ = 7,
@@ -123,6 +126,7 @@ int warmUpBarrierRet;
 
 int remote_qp0;
 int distribution_mode = EXPONENTIAL;
+int priority_distribution_mode = FB;
 double *rps;
 int window_size = 1;
 uint16_t active_thread_num = 1;
@@ -230,10 +234,10 @@ double rand_gen() {
    return ( (double)(rand()) + 1. )/( (double)(RAND_MAX) + 1. );
 }
 
-uint8_t gen_priority(uint8_t *priorityID) {
+uint16_t gen_priority(uint16_t *priorityID) {
 
 	static uint16_t index = 0;
-	uint8_t result = priorityID[index];
+	uint16_t result = priorityID[index];
 	//printf("index = %lu, OR  = %lu \n",index,SERVICE_TIME_SIZE | index);
 	if( (SERVICE_TIME_SIZE | index) == 0xFFFF) {
 		//printf("worked!, index = %lu \n",index);
@@ -421,13 +425,12 @@ void* client_send(void* x) {
 	RDMAConnection *conn = ((struct thread_data*) x)->conn;
 
 	uint64_t *serviceTime = (uint64_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
-	uint8_t *priorityID = (uint8_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
+	uint16_t *priorityID = (uint16_t *)malloc(SERVICE_TIME_SIZE*sizeof(uint64_t));
 
 
 	if(distribution_mode == FIXED) {
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			serviceTime[i] = mean;
-			priorityID[i] = 0;
 		}
 	}
 	else if(distribution_mode == EXPONENTIAL) {
@@ -445,11 +448,11 @@ void* client_send(void* x) {
 			//printf("result = %d \n",result);
 			if (result == 0) serviceTime[i] = mean;
 			else serviceTime[i] = mean*bimodal_ratio;
-		
-			priorityID[i] = result;
 		}
 	}
-	else if(distribution_mode == FB) {
+	else printf("Invalid service time distribution mode \n");
+
+	if(priority_distribution_mode == FB) {
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
 		//std::discrete_distribution<> bm;
@@ -484,7 +487,6 @@ void* client_send(void* x) {
 
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
-			serviceTime[i] = mean;		
 			priorityID[i] = bm(gen);
 		}
 
@@ -496,7 +498,7 @@ void* client_send(void* x) {
 		}
 		*/
 	}
-	else if(distribution_mode == PC) {
+	else if(priority_distribution_mode == PC) {
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
 		std::discrete_distribution<> bm({95, 5});
@@ -507,7 +509,6 @@ void* client_send(void* x) {
 
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
-			serviceTime[i] = mean;	
 			if(bm(gen) == 0) {
 				priorityID[i] = twentyPercent;//8*twentyPercent;
 				if(twentyPercent == numQueuesGettingMoreLoad-1) twentyPercent = 0;
@@ -520,14 +521,13 @@ void* client_send(void* x) {
 			}
 		}
 	}
-	else if(distribution_mode == SQ) {
+	else if(priority_distribution_mode == SQ) {
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
-			serviceTime[i] = mean;		
 			priorityID[i] = numberOfPriorities-1;
 		}
 	}
-	else if(distribution_mode == NC) {
+	else if(priority_distribution_mode == NC) {
 		//traffic passes through 20 queues all the time and through the rest with a probability of 5%
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
@@ -541,7 +541,6 @@ void* client_send(void* x) {
 
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
-			serviceTime[i] = mean;	
 			if(bm(gen) == 0) {
 				priorityID[i] = twentyPercent;
 				if(twentyPercent == numQueuesGettingMoreLoad-1) twentyPercent = 0;
@@ -554,7 +553,7 @@ void* client_send(void* x) {
 			}
 		}
 	}
-	else if(distribution_mode == EXP) {
+	else if(priority_distribution_mode == EXP) {
 
 		//generating 10000 item array of discrete exponentially distributed priorities
 		const uint64_t arrayLength = 10000;
@@ -597,7 +596,6 @@ void* client_send(void* x) {
 
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
-			serviceTime[i] = mean;		
 			priorityID[i] = arr[bm(gen)];
 		}
 		/*
@@ -608,7 +606,7 @@ void* client_send(void* x) {
 		}
 		*/
 	}
-	else if(distribution_mode == PCR) {
+	else if(priority_distribution_mode == PCR) {
 		std::random_device rd{};
 		std::mt19937 gen{rd()};
 		std::discrete_distribution<> bm({95, 5});
@@ -619,7 +617,6 @@ void* client_send(void* x) {
 
 		for(uint64_t i = 0; i < SERVICE_TIME_SIZE; i++) {
 			//printf("result = %d \n",result);
-			serviceTime[i] = mean;	
 			if(bm(gen) == 0) {
 				priorityID[i] = numberOfPriorities-1-twentyPercent;//8*twentyPercent;
 				if(twentyPercent == numQueuesGettingMoreLoad-1) twentyPercent = 0;
@@ -675,13 +672,27 @@ void* client_send(void* x) {
 
 	//put while loop for 10 seconds warmup
 	struct timeval start, end;
+	
+	//printf("at barrier before warmup, %llu \n", thread_num);
+	//ret = pthread_barrier_wait(&barrier);
+
+
+
+	conn->offset = thread_num%SERVER_THREADS;
+	//printf("thread_num = %d, offset = %d, rx_depth = %d \n", thread_num, conn->offset, conn->rx_depth);
+	conn->dest_qpn = remote_qp0+conn->offset;
+	printf("T%d - remote_qp0 = 0x%06x , %d, dest_qpn = 0x%06x , %d, offset = %llu \n",thread_num,remote_qp0,remote_qp0,conn->dest_qpn,conn->dest_qpn, conn->offset);
+
+
+
+
+
+	warmUpBarrierRet = pthread_barrier_wait(&warmUpBarrier);
+	printf("after barrier before warmup, %llu \n", thread_num);
 
 	if (gettimeofday(&start, NULL)) {
 		perror("gettimeofday");
 	}
-	
-	//printf("at barrier before warmup, %llu \n", thread_num);
-	ret = pthread_barrier_wait(&barrier);
 
 	while(1) {
 		if (gettimeofday(&end, NULL)) {
@@ -697,7 +708,8 @@ void* client_send(void* x) {
 		}
 		
 		uint64_t req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
-		uint8_t priority = gen_priority(priorityID);
+		uint16_t priority = gen_priority(priorityID);
+		//printf("T %llu , priority = %llu \n",thread_num, priority);
 
 		req_lat = req_lat >> 4;
 		#if MEAS_GEN_LAT 
@@ -716,7 +728,8 @@ void* client_send(void* x) {
 			conn->buf_send[i][0] = 0;
 			conn->buf_send[i][2] = 0;
 			conn->buf_send[i][3] = 0;
-			conn->buf_send[i][12] = priority;
+			conn->buf_send[i][12] = (priority >> 8) & ((1u <<  8) - 1);
+			conn->buf_send[i][13] =  priority & ((1u <<  8) - 1);
 		//}
 		/*
 		else {
@@ -785,7 +798,9 @@ void* client_send(void* x) {
 			#endif
 
 			#if RR
-				conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+				//conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+				conn->offset++;
+				if(conn->offset == SERVER_THREADS) conn->offset = 0;
 				conn->dest_qpn = remote_qp0+conn->offset;
 			#endif	
 
@@ -797,6 +812,7 @@ void* client_send(void* x) {
 
 	}
 
+	printf("thread %llu finished warmup \n", thread_num);
 
 	warmUpBarrierRet = pthread_barrier_wait(&warmUpBarrier);
 	
@@ -829,7 +845,8 @@ void* client_send(void* x) {
 			
 
 			uint64_t req_lat = gen_latency(mean, distribution_mode,0, serviceTime);
-			uint8_t priority = gen_priority(priorityID);
+			uint16_t priority = gen_priority(priorityID);
+			//printf("T %llu , priority = %llu \n",thread_num, priority);
 
 			req_lat = req_lat >> 4;
             #if MEAS_GEN_LAT 
@@ -857,7 +874,8 @@ void* client_send(void* x) {
 				conn->buf_send[i][0] = lat_upper;
 				conn->buf_send[i][2] = 0;
 				conn->buf_send[i][3] = 255;
-				conn->buf_send[i][12] = priority;
+				conn->buf_send[i][12] = (priority >> 8) & ((1u <<  8) - 1);
+				conn->buf_send[i][13] =  priority & ((1u <<  8) - 1);
 				//if(sequence_number == 255) sequence_number = 0;
 				//else sequence_number++;
 			//}
@@ -964,7 +982,9 @@ void* client_send(void* x) {
 				#endif
 
 				#if RR
-					conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+					//conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+					conn->offset++;
+					if(conn->offset == SERVER_THREADS) conn->offset = 0;
 					conn->dest_qpn = remote_qp0+conn->offset;
 				#endif	
 
@@ -1005,7 +1025,7 @@ void* client_threadfunc(void* x) {
 	RDMAConnection *conn = tdata->conn;
 	//hamed: may have to change window size of each thread... window_size = conn->bufs_num/active_thread_num;
 
-	conn->offset = thread_num%SERVER_THREADS;
+	//conn->offset = thread_num%SERVER_THREADS;
 	//printf("thread_num = %d, offset = %d, rx_depth = %d \n", thread_num, conn->offset, conn->rx_depth);
 
 	cpu_set_t cpuset;
@@ -1014,7 +1034,7 @@ void* client_threadfunc(void* x) {
 	sched_setaffinity(0, sizeof(cpuset), &cpuset);
 
 	sleep(1);
-	conn->dest_qpn = remote_qp0+conn->offset;
+	//conn->dest_qpn = remote_qp0+conn->offset;
 
 	struct timeval start, end;
 
@@ -1051,7 +1071,7 @@ void* client_threadfunc(void* x) {
 
 		//while (conn->rcnt < conn->iters || conn->scnt < conn->iters) {
 		uint64_t outs_send = 0;
-		uint8_t priorityID = 0;
+		uint16_t priorityID = 0;
 		uint64_t latency = 0;
 		uint32_t ingressTS = 0;
 		uint32_t egressTS = 0;
@@ -1127,7 +1147,8 @@ void* client_threadfunc(void* x) {
 
 						//if(conn->rcnt > conn->iters - INTERVAL/1000000 && conn->rcnt % 1 == 0) printf("T%d - rcnt = %d, scnt = %d \n",thread_num,conn->rcnt,conn->scnt);
 						bufID = a-num_bufs;
-						priorityID = (uint8_t)conn->buf_recv[bufID][52];
+						priorityID = (uint8_t)conn->buf_recv[bufID][53] + (uint8_t)conn->buf_recv[bufID][52] * 0x100;
+
 						
 						//printf("priority received = %llu \n", priorityID);
 						//for(z = 42; z <= 49; z++) printf("%x ",(uint8_t)conn->buf_recv[bufID][z]);
@@ -1223,7 +1244,8 @@ void* client_threadfunc(void* x) {
 					    --conn->routs;
 
 						bufID = a-num_bufs;
-						priorityID = (uint8_t)conn->buf_recv[bufID][52];
+						priorityID = (uint8_t)conn->buf_recv[bufID][53] + (uint8_t)conn->buf_recv[bufID][52] * 0x100;
+
 						
 						//for(z = 42; z <= 49; z++) printf("%x ",(uint8_t)conn->buf_recv[bufID][z]);
 						//printf("\n");
@@ -1307,13 +1329,13 @@ void* client_threadfunc(void* x) {
 		//int num_bufs = conn->sync_bufs_num;
 		for (int i = 0; i < 1; i++) {
 			//send one pkt with 0xFFFF
-			conn->buf_send[i][1] = 0; //used to temrinate server
+			conn->buf_send[i][1] = 1; //used to temrinate server
 			conn->buf_send[i][0] = 0; //used to temrinate server
 			conn->buf_send[i][2] = 255; //seq number
 			conn->buf_send[i][3] = 255; //used to temrinate server
 			conn->buf_send[i][10] = 0; //priority
 
-			//printf("sending after barrier, dest_qpn = %llu \n", conn->dest_qpn);
+			printf("sending last packet to QP %x, %llu \n", remote_qp0, remote_qp0);
 
 			int success = conn->pp_post_send(conn->ctx, remote_qp0 /*conn->dest_qpn*/, conn->size, i);
 			
@@ -1333,7 +1355,9 @@ void* client_threadfunc(void* x) {
 			}
 
 			#if RR
-				conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+				//conn->offset = ((SERVER_THREADS-1) & (conn->offset+1));
+				conn->offset++;
+				if(conn->offset == SERVER_THREADS) conn->offset = 0;
 				conn->dest_qpn = remote_qp0+conn->offset;
 			#endif
 
@@ -1524,7 +1548,7 @@ void* client_threadfunc(void* x) {
 int main(int argc, char *argv[])
 {
 	int c;
-	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:r:p:c:l:n:z:")) != -1)
+	while ((c = getopt (argc, argv, "w:t:d:g:v:q:m:s:x:p:c:l:n:z:y:r:")) != -1)
     switch (c)
 	{
       case 'w':
@@ -1551,7 +1575,7 @@ int main(int argc, char *argv[])
 	  case 's':
 	  	servername = optarg;
 		break;
-      case 'r':
+      case 'x':
         bimodal_ratio = atoi(optarg);
         break;
       case 'p':
@@ -1568,6 +1592,12 @@ int main(int argc, char *argv[])
 		break;
 	  case 'z':
 		tcp_port = atoi(optarg);
+		break;
+	  case 'y':
+	  	priority_distribution_mode = atoi(optarg);
+		break;
+	  case 'r':
+		runtime = atoi(optarg);
 		break;
       default:
 	  	printf("Unrecognized command line argument\n");
@@ -1628,7 +1658,7 @@ int main(int argc, char *argv[])
 	uint8_t ib_port = 1;
 	
 	#if DO_UC 
-		do_uc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1);
+		do_uc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1, active_thread_num);
 	#else
 		do_rc(ib_devname_in, servername, tcp_port, ib_port, gidx_in, 1);
 	#endif
@@ -1659,10 +1689,12 @@ int main(int argc, char *argv[])
 		if(i == 0) sleep(3);
 	}
 
+	warmUpBarrierRet = pthread_barrier_wait(&warmUpBarrier);
+
 	my_sleep(10*1000000000);
-	printf("warmup complete! \n");
 	//warmUpFinished = true;
 	warmUpBarrierRet = pthread_barrier_wait(&warmUpBarrier);
+	printf("warmup complete! \n");
 	warmUpDone = true;
 
 

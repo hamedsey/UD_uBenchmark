@@ -94,6 +94,7 @@ struct resources {
     struct ibv_qp *qp;                  // QP handle
     struct ibv_mr *mr;                  // MR handle for buf
     alignas(64) volatile char *buf;                 // memory buffer pointer, used for
+    //alignas(64) volatile char *buf2;                 // memory buffer pointer, used for
     //unsigned long long *buf;
     //uint64_t *buf;
 
@@ -328,7 +329,7 @@ static void resources_init(struct resources *res) {
     res->sock = -1;
 }
 
-static int resources_create(struct resources *res, uint32_t numberOfQueues) {
+static int resources_create(struct resources *res, uint32_t numberOfQueues, uint64_t numberOfThreads) {
     struct ibv_device **dev_list = NULL;
     struct ibv_qp_init_attr qp_init_attr;
     struct ibv_device *ib_dev = NULL;
@@ -417,20 +418,32 @@ static int resources_create(struct resources *res, uint32_t numberOfQueues) {
     printf("number of queues = %d \n", numberOfQueues);
 
     uint64_t numAllocatedBytes;
-    if(numberOfQueues % 8 == 0) numAllocatedBytes = numberOfQueues;
+    if(numberOfQueues < 64 == 0) numAllocatedBytes = 64;
+    else if(numberOfQueues % 64 == 0) numAllocatedBytes = numberOfQueues;
     else numAllocatedBytes = ((numberOfQueues/64) + 1)*64;
 
-    printf("number of bytes allocated = %llu \n", numAllocatedBytes);
-    res->buf = (volatile char *)calloc(numAllocatedBytes, size);
+    uint64_t totalBytes;
+    totalBytes = numAllocatedBytes*numberOfThreads;
+    printf("number of bytes allocated = %llu \n", totalBytes);
+    res->buf = (volatile char *)malloc(totalBytes * sizeof(volatile char));
     assert(res->buf != NULL);
-    printf("%x \n",(res->buf));
+    printf("buf address %p \n",(res->buf));
+    //for(int i = 0 ; i < numberOfThreads; i++) printf("buf address [%llu] = %p \n", i, (res->buf[i]));
+    memset((void*)(res->buf), 0x00,totalBytes);
     int t;
-    //for(t = 0; t < numAllocatedBytes; t++) printf("%x , %llu \n",&((res->buf)[t]), (res->buf)[t]);
+    for(t = 0; t < totalBytes; t++) if(t % 64 == 0) printf("%p , %llu \n",((res->buf)+t), (res->buf)[t]);
+     
+    //res->buf2 = (volatile char *)malloc(totalBytes * sizeof(volatile char));
+    //assert(res->buf2 != NULL);
+    //printf("buf address %p \n",(res->buf2));
+    //for(int i = 0 ; i < numberOfThreads; i++) printf("buf address [%llu] = %p \n", i, (res->buf[i]));
+    //memset((void*)(res->buf2), 0x00,totalBytes);
+    //for(t = 0; t < totalBytes; t++) if(t % 64 == 0) printf("%p , %llu \n",((res->buf2)+t), (res->buf2)[t]);
 
     // register the memory buffer
     mr_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE; //| IBV_ACCESS_REMOTE_READ;
  
-    res->mr = ibv_reg_mr(res->pd, (void *)res->buf, numAllocatedBytes*size, mr_flags);
+    res->mr = ibv_reg_mr(res->pd, (void *)res->buf, totalBytes, mr_flags);
     assert(res->mr != NULL);
 
     //res->mr->rkey = 0x00000000;
@@ -878,7 +891,7 @@ static void print_usage(const char *progname) {
 
 // This function creates and allocates all necessary system resources. These are
 // stored in res.
-int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int gid_idx, uint32_t numberOfQueues) {
+int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int gid_idx, uint64_t numberOfQueues, uint64_t numberOfThreads) {
 
     printf("b4 anything \n");
     char temp_char;
@@ -897,7 +910,7 @@ int do_uc(char *dev_name, char *server_name, uint32_t tcp_port, int ib_port, int
     resources_init(&res);
 
     // create resources before using them
-    resources_create(&res, numberOfQueues);
+    resources_create(&res, numberOfQueues, numberOfThreads);
 
     // connect the QPs
     connect_qp(&res);
